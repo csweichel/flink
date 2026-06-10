@@ -21,6 +21,10 @@ func ReadClientJS() ([]byte, error) {
 	return files.ReadFile("static/flink.js")
 }
 
+func ReadLogoPNG() ([]byte, error) {
+	return files.ReadFile("static/flink-logo.png")
+}
+
 func ReadDist(name string) ([]byte, string, error) {
 	name = strings.TrimPrefix(path.Clean("/"+name), "/")
 	if name == "." || name == "" {

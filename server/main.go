@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"flink/server/cmd"
+	"github.com/csweichel/flink/server/cmd"
 )
 
 func main() {

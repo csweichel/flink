@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"flink/server/storage"
+	"github.com/csweichel/flink/server/storage"
 )
 
 var (
@@ -71,6 +71,11 @@ type Session struct {
 type Upload struct {
 	URL  string `json:"url"`
 	Name string `json:"name"`
+}
+
+type SiteFileInfo struct {
+	Path string `json:"path"`
+	Size int    `json:"size"`
 }
 
 func NewStore(backend storage.Backend, defaultIndex string) *Store {
@@ -354,6 +359,29 @@ func (s *Store) ReadSiteFile(tenant, slug, p string) ([]byte, error) {
 	return s.backend.Get(context.Background(), siteFilesCollection(tenant, slug), clean)
 }
 
+func (s *Store) ListSiteFiles(tenant, slug, prefix string) ([]SiteFileInfo, error) {
+	if err := validateTenant(tenant); err != nil {
+		return nil, err
+	}
+	if !ValidSlug(slug) {
+		return nil, fmt.Errorf("invalid slug %q", slug)
+	}
+	cleanPrefix, err := CleanPrefix(prefix)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := s.backend.List(context.Background(), siteFilesCollection(tenant, slug), cleanPrefix)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]SiteFileInfo, 0, len(entries))
+	for _, entry := range entries {
+		files = append(files, SiteFileInfo{Path: entry.Key, Size: len(entry.Value)})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return files, nil
+}
+
 func (s *Store) WriteSiteFile(tenant, slug, p string, b []byte) error {
 	if err := validateTenant(tenant); err != nil {
 		return err
@@ -366,6 +394,27 @@ func (s *Store) WriteSiteFile(tenant, slug, p string, b []byte) error {
 		return err
 	}
 	if err := s.backend.Put(context.Background(), siteFilesCollection(tenant, slug), clean, b); err != nil {
+		return err
+	}
+	if meta, err := s.ReadMeta(tenant, slug); err == nil {
+		meta.UpdatedAt = time.Now().UTC()
+		_ = s.writeMeta(tenant, meta)
+	}
+	return nil
+}
+
+func (s *Store) DeleteSiteFile(tenant, slug, p string) error {
+	if err := validateTenant(tenant); err != nil {
+		return err
+	}
+	if !ValidSlug(slug) {
+		return fmt.Errorf("invalid slug %q", slug)
+	}
+	clean, err := CleanPath(p)
+	if err != nil {
+		return err
+	}
+	if err := s.backend.Delete(context.Background(), siteFilesCollection(tenant, slug), clean); err != nil {
 		return err
 	}
 	if meta, err := s.ReadMeta(tenant, slug); err == nil {
@@ -532,6 +581,26 @@ func CleanPath(p string) (string, error) {
 		}
 	}
 	return strings.TrimPrefix(path.Clean("/"+p), "/"), nil
+}
+
+func CleanPrefix(p string) (string, error) {
+	p = strings.TrimPrefix(p, "/")
+	if p == "" {
+		return "", nil
+	}
+	for _, part := range strings.Split(p, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("invalid path")
+		}
+	}
+	clean := strings.TrimPrefix(path.Clean("/"+p), "/")
+	if clean == "." {
+		return "", nil
+	}
+	if strings.HasSuffix(p, "/") && clean != "" {
+		clean += "/"
+	}
+	return clean, nil
 }
 
 const (

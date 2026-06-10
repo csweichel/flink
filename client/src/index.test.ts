@@ -60,6 +60,38 @@ test("uploads post multipart data and expose upload helpers", async () => {
   assert.equal(calls[1].url, "https://flink.internal/uploads/alice/demo/file.txt");
 });
 
+test("file APIs list, write, and delete site files", async () => {
+  const calls: FetchCall[] = [];
+  const fetchMock = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    if (String(input).includes("prefix=assets")) {
+      return jsonResponse([{ path: "assets/app.css", size: 15 }]);
+    }
+    if (init?.method === "DELETE") {
+      return jsonResponse({ deleted: true });
+    }
+    return jsonResponse({ path: "assets/app.css" });
+  };
+  const flink = createFlinkClient({
+    site: "demo",
+    baseUrl: "https://flink.internal",
+    fetch: fetchMock as typeof fetch,
+  });
+
+  const files = await flink.files.list("assets");
+  await flink.files.write("assets/app.css", "body{color:red}");
+  const deleted = await flink.files.delete("assets/app.css");
+
+  assert.deepEqual(files, [{ path: "assets/app.css", size: 15 }]);
+  assert.deepEqual(deleted, { deleted: true });
+  assert.equal(calls[0].url, "https://flink.internal/api/public/demo/files?prefix=assets");
+  assert.equal(calls[1].url, "https://flink.internal/api/public/demo/files?path=assets%2Fapp.css");
+  assert.equal(calls[1].init?.method, "PUT");
+  assert.equal(calls[1].init?.body, "body{color:red}");
+  assert.equal(calls[2].url, "https://flink.internal/api/public/demo/files?path=assets%2Fapp.css");
+  assert.equal(calls[2].init?.method, "DELETE");
+});
+
 test("AI accepts string prompt and returns typed response", async () => {
   let requestBody = "";
   const fetchMock = async (_input: RequestInfo | URL, init?: RequestInit) => {

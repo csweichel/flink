@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"flink/cli/cmd"
+	"github.com/csweichel/flink/cli/cmd"
 )
 
 func main() {

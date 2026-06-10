@@ -15,8 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"flink/server/api"
-	"flink/server/storage"
+	"github.com/csweichel/flink/server/api"
+	"github.com/csweichel/flink/server/frontend"
+	"github.com/csweichel/flink/server/storage"
 
 	"github.com/gorilla/websocket"
 )
@@ -40,6 +41,73 @@ func TestCreateEditHostAndDataAPI(t *testing.T) {
 	res = request(t, a, http.MethodGet, "/api/public/hello/data/note", nil, "")
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("saved")) {
 		t.Fatalf("data not saved: %d %s", res.Code, res.Body.String())
+	}
+}
+
+func TestSiteFilesSupportNestedDirectories(t *testing.T) {
+	a := testApp(t)
+	postJSON(t, a, "/api/sites", map[string]string{"slug": "tree"})
+	putJSON(t, a, "/api/sites/tree/files?path=index.html", map[string]string{"content": "<h1>root</h1>"})
+	putJSON(t, a, "/api/sites/tree/files?path=assets/app.css", map[string]string{"content": "body{color:red}"})
+	putJSON(t, a, "/api/sites/tree/files?path=docs/index.html", map[string]string{"content": "<h1>docs</h1>"})
+	putJSON(t, a, "/api/sites/tree/files?path=docs/guide.html", map[string]string{"content": "<h1>guide</h1>"})
+
+	res := request(t, a, http.MethodGet, "/t/acme/s/tree/assets/app.css", nil, "")
+	if res.Code != http.StatusOK || res.Body.String() != "body{color:red}" {
+		t.Fatalf("nested asset not served: %d %q", res.Code, res.Body.String())
+	}
+
+	res = request(t, a, http.MethodGet, "/t/acme/s/tree/assets/missing.css", nil, "")
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("missing nested asset should 404, got %d %q", res.Code, res.Body.String())
+	}
+
+	res = request(t, a, http.MethodGet, "/t/acme/s/tree/docs/", nil, "")
+	if res.Code != http.StatusOK || res.Body.String() != "<h1>docs</h1>" {
+		t.Fatalf("directory index not served: %d %q", res.Code, res.Body.String())
+	}
+
+	res = request(t, a, http.MethodGet, "/t/acme/s/tree/docs", nil, "")
+	if res.Code != http.StatusOK || res.Body.String() != "<h1>docs</h1>" {
+		t.Fatalf("directory index without slash not served: %d %q", res.Code, res.Body.String())
+	}
+
+	res = request(t, a, http.MethodGet, "/api/sites/tree/files", nil, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("file list failed: %d %s", res.Code, res.Body.String())
+	}
+	var files []api.SiteFileInfo
+	if err := json.Unmarshal(res.Body.Bytes(), &files); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(files))
+	for _, file := range files {
+		got = append(got, file.Path)
+	}
+	want := []string{"assets/app.css", "docs/guide.html", "docs/index.html", "index.html"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected files: got %#v want %#v", got, want)
+	}
+
+	res = request(t, a, http.MethodGet, "/api/sites/tree/files?prefix=docs/", nil, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("file prefix list failed: %d %s", res.Code, res.Body.String())
+	}
+	files = nil
+	if err := json.Unmarshal(res.Body.Bytes(), &files); err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0].Path != "docs/guide.html" || files[1].Path != "docs/index.html" {
+		t.Fatalf("unexpected prefix files: %#v", files)
+	}
+
+	res = request(t, a, http.MethodDelete, "/api/sites/tree/files?path=docs/guide.html", nil, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("file delete failed: %d %s", res.Code, res.Body.String())
+	}
+	res = request(t, a, http.MethodGet, "/api/sites/tree/files?path=docs/guide.html", nil, "")
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("deleted file should be gone, got %d", res.Code)
 	}
 }
 
@@ -242,7 +310,7 @@ func TestTenantSiteSlugsAreIsolated(t *testing.T) {
 func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 	a := testApp(t)
 	res := request(t, a, http.MethodGet, "/_flink/", nil, "")
-	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`id="root"`)) {
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`id="root"`)) || !bytes.Contains(res.Body.Bytes(), []byte(`/flink-logo.png`)) {
 		t.Fatalf("dashboard build not served: %d %s", res.Code, res.Body.String())
 	}
 
@@ -258,6 +326,20 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 	res = request(t, a, http.MethodGet, "/flink.js", nil, "")
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("window.flink")) {
 		t.Fatalf("client library not served: %d", res.Code)
+	}
+
+	wantLogo, err := frontend.ReadLogoPNG()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = rawRequest(t, a, http.MethodGet, "/flink-logo.png", nil, "")
+	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "image/png" || !bytes.Equal(res.Body.Bytes(), wantLogo) {
+		t.Fatalf("logo not served exactly: status=%d content-type=%q bytes=%d", res.Code, res.Header().Get("Content-Type"), res.Body.Len())
+	}
+
+	res = rawRequest(t, a, http.MethodGet, "/_flink/login", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`/flink-logo.png`)) {
+		t.Fatalf("login should reference logo: %d %s", res.Code, res.Body.String())
 	}
 }
 

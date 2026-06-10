@@ -125,7 +125,10 @@ function App() {
   return (
     <div className="min-h-screen bg-stone-100 text-neutral-950">
       <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-stone-300 bg-white/90 px-4 backdrop-blur">
-        <h1 className="text-lg font-semibold">Flink</h1>
+        <a className="flex min-w-0 items-center gap-2" href="/_flink" aria-label="Flink dashboard">
+          <img className="h-9 w-9 shrink-0 object-contain" src="/flink-logo.png" alt="" />
+          <span className="text-lg font-semibold">Flink</span>
+        </a>
         <div className="flex items-center gap-3 text-sm">
           <span className="font-medium text-neutral-600">{tenant?.username}</span>
           <a className="font-medium text-teal-700 hover:text-teal-900" href={current ? siteURL(current) : "#"} target="_blank" rel="noreferrer">

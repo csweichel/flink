@@ -40,6 +40,11 @@ export interface SiteFile {
   content: string;
 }
 
+export interface SiteFileInfo {
+  path: string;
+  size: number;
+}
+
 export type MessageHandler<T = unknown> = (message: T, event: MessageEvent) => void;
 
 export interface RealtimeRoom<TSend = unknown, TReceive = unknown> {
@@ -70,8 +75,11 @@ export interface FlinkStorageAPI {
 }
 
 export interface FlinkFilesAPI {
+  list(prefix?: string): Promise<SiteFileInfo[]>;
   read(path?: string): Promise<SiteFile>;
   write(path: string, content: string | Blob | ArrayBuffer | Uint8Array): Promise<{ path: string }>;
+  delete(path: string): Promise<{ deleted: true }>;
+  del(path: string): Promise<{ deleted: true }>;
   url(path?: string): string;
 }
 
@@ -171,6 +179,10 @@ export function createFlinkClient(options: FlinkClientOptions = {}): FlinkClient
   };
 
   const files: FlinkFilesAPI = {
+    list(prefix?: string) {
+      const query = prefix ? `?prefix=${encodeURIComponent(prefix)}` : "";
+      return request<SiteFileInfo[]>(`/files${query}`);
+    },
     read(path = "index.html") {
       return request<SiteFile>(`/files?path=${encodeURIComponent(path)}`);
     },
@@ -179,6 +191,12 @@ export function createFlinkClient(options: FlinkClientOptions = {}): FlinkClient
         method: "PUT",
         body: content,
       });
+    },
+    delete(path: string) {
+      return request<{ deleted: true }>(`/files?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+    },
+    del(path: string) {
+      return files.delete(path);
     },
     url(path = "index.html") {
       const clean = path.replace(/^\/+/, "");

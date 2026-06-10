@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"flink/server/api"
-	"flink/server/frontend"
-	"flink/server/storage"
+	"github.com/csweichel/flink/server/api"
+	"github.com/csweichel/flink/server/frontend"
+	"github.com/csweichel/flink/server/storage"
 )
 
 type Config struct {
@@ -84,6 +84,8 @@ func (a *App) routes() {
 	a.mux.HandleFunc("/api/sites", a.requireTenant(a.handleSites))
 	a.mux.HandleFunc("/api/sites/", a.requireTenant(a.handleSiteAPI))
 	a.mux.HandleFunc("/api/public/", a.requireTenant(a.handlePublicAPI))
+	a.mux.HandleFunc("/flink-logo.png", a.handleLogo)
+	a.mux.HandleFunc("/favicon.ico", a.handleLogo)
 	a.mux.HandleFunc("/flink.js", func(w http.ResponseWriter, r *http.Request) {
 		b, err := frontend.ReadClientJS()
 		if err != nil {
@@ -96,6 +98,16 @@ func (a *App) routes() {
 	a.mux.HandleFunc("/uploads/", a.requireTenant(a.handleUploadFile))
 	a.mux.HandleFunc("/ws/", a.requireTenant(a.handleWS))
 	a.mux.HandleFunc("/", a.requireTenant(a.handleSite))
+}
+
+func (a *App) handleLogo(w http.ResponseWriter, r *http.Request) {
+	b, err := frontend.ReadLogoPNG()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	http.ServeContent(w, r, "flink-logo.png", time.Time{}, bytes.NewReader(b))
 }
 
 func (a *App) requireTenant(next http.HandlerFunc) http.HandlerFunc {
@@ -244,7 +256,7 @@ func registerHTML(message string) string {
 }
 
 func pendingHTML(username string) string {
-	return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Flink pending</title>` + authCSS() + `</head><body><main><h1>Flink</h1><p>Registration for <strong>` + html.EscapeString(username) + `</strong> is pending approval.</p><p><a href="/_flink/login">Back to sign in</a></p></main></body></html>`
+	return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Flink pending</title><link rel="icon" type="image/png" href="/flink-logo.png">` + authCSS() + `</head><body><main><img class="logo" src="/flink-logo.png" alt="Flink"><h1>Flink</h1><p>Registration for <strong>` + html.EscapeString(username) + `</strong> is pending approval.</p><p><a href="/_flink/login">Back to sign in</a></p></main></body></html>`
 }
 
 func authHTML(title, action, button, message string, showRegister bool) string {
@@ -255,11 +267,11 @@ func authHTML(title, action, button, message string, showRegister bool) string {
 	if message != "" {
 		message = `<p class="error">` + html.EscapeString(message) + `</p>`
 	}
-	return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Flink ` + title + `</title>` + authCSS() + `</head><body><main><form method="post" action="` + action + `"><h1>Flink</h1><h2>` + title + `</h2>` + message + `<input name="username" autocomplete="username" placeholder="tenant" pattern="[a-z0-9-]+" autofocus required><input name="password" type="password" autocomplete="current-password" placeholder="password" required><button>` + button + `</button>` + extra + `</form></main></body></html>`
+	return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Flink ` + title + `</title><link rel="icon" type="image/png" href="/flink-logo.png">` + authCSS() + `</head><body><main><form method="post" action="` + action + `"><img class="logo" src="/flink-logo.png" alt="Flink"><h1>Flink</h1><h2>` + title + `</h2>` + message + `<input name="username" autocomplete="username" placeholder="tenant" pattern="[a-z0-9-]+" autofocus required><input name="password" type="password" autocomplete="current-password" placeholder="password" required><button>` + button + `</button>` + extra + `</form></main></body></html>`
 }
 
 func authCSS() string {
-	return `<style>body{font-family:ui-sans-serif,system-ui,sans-serif;margin:0;display:grid;min-height:100vh;place-items:center;background:#f7f7f4;color:#171717}main,form{width:min(380px,calc(100vw - 32px));display:grid;gap:12px}h1,h2,p{margin:0}h1{font-size:28px}h2{font-size:16px;font-weight:600;color:#525252}input,button{font:inherit;padding:12px 14px;border:1px solid #c9c9c2;border-radius:6px}button{background:#151515;color:white;cursor:pointer}.error{color:#b91c1c}a{color:#0f766e}</style>`
+	return `<style>body{font-family:ui-sans-serif,system-ui,sans-serif;margin:0;display:grid;min-height:100vh;place-items:center;background:#f7f7f4;color:#171717}main,form{width:min(380px,calc(100vw - 32px));display:grid;gap:12px}.logo{width:112px;height:112px;object-fit:contain;display:block;margin:0 0 4px}h1,h2,p{margin:0}h1{font-size:28px}h2{font-size:16px;font-weight:600;color:#525252}input,button{font:inherit;padding:12px 14px;border:1px solid #c9c9c2;border-radius:6px}button{background:#151515;color:white;cursor:pointer}.error{color:#b91c1c}a{color:#0f766e}</style>`
 }
 
 func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -352,13 +364,23 @@ func (a *App) dispatchAPI(w http.ResponseWriter, r *http.Request, slug, area, ta
 }
 
 func (a *App) handleFiles(w http.ResponseWriter, r *http.Request, tenant, slug string) {
-	p, err := api.CleanPath(r.URL.Query().Get("path"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
 	switch r.Method {
 	case http.MethodGet:
+		if !r.URL.Query().Has("path") {
+			prefix, err := api.CleanPrefix(r.URL.Query().Get("prefix"))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			files, err := a.store.ListSiteFiles(tenant, slug, prefix)
+			writeJSON(w, files, err)
+			return
+		}
+		p, err := api.CleanPath(r.URL.Query().Get("path"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
 		b, err := a.store.ReadSiteFile(tenant, slug, p)
 		if err != nil {
 			writeError(w, http.StatusNotFound, err)
@@ -366,6 +388,11 @@ func (a *App) handleFiles(w http.ResponseWriter, r *http.Request, tenant, slug s
 		}
 		writeJSON(w, map[string]string{"path": p, "content": string(b)}, nil)
 	case http.MethodPut, http.MethodPost:
+		p, err := api.CleanPath(r.URL.Query().Get("path"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
 		b, err := io.ReadAll(r.Body)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
@@ -380,6 +407,13 @@ func (a *App) handleFiles(w http.ResponseWriter, r *http.Request, tenant, slug s
 			}
 		}
 		writeJSON(w, map[string]string{"path": p}, a.store.WriteSiteFile(tenant, slug, p, b))
+	case http.MethodDelete:
+		p, err := api.CleanPath(r.URL.Query().Get("path"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"deleted": true}, a.store.DeleteSiteFile(tenant, slug, p))
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -515,6 +549,7 @@ func (a *App) handleSite(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	originalSitePath := sitePath
 	if sitePath == "" || strings.HasSuffix(sitePath, "/") {
 		sitePath = sitePath + "index.html"
 	}
@@ -524,9 +559,18 @@ func (a *App) handleSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, err := a.store.ReadSiteFile(tenant, slug, p)
-	if err != nil && p != "index.html" {
-		p = "index.html"
-		b, err = a.store.ReadSiteFile(tenant, slug, p)
+	if err != nil {
+		if !strings.HasSuffix(sitePath, "/") && filepath.Ext(p) == "" {
+			dirIndex := strings.TrimSuffix(p, "/") + "/index.html"
+			b, err = a.store.ReadSiteFile(tenant, slug, dirIndex)
+			if err == nil {
+				p = dirIndex
+			}
+		}
+		if err != nil && p != "index.html" && filepath.Ext(originalSitePath) == "" {
+			p = "index.html"
+			b, err = a.store.ReadSiteFile(tenant, slug, p)
+		}
 	}
 	if err != nil {
 		http.NotFound(w, r)

@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"flink/server/api"
-	"flink/server/storage"
+	"github.com/csweichel/flink/server/api"
+	"github.com/csweichel/flink/server/storage"
+	"github.com/csweichel/flink/shared/banner"
 )
 
 func runCommand(args ...string) (string, error) {
@@ -60,7 +61,7 @@ func TestHelpPrintsPlainBannerWhenCaptured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "▟██████▙") || !strings.Contains(out, "publish • host • realtime") {
+	if !strings.Contains(out, "████████████████") || !strings.Contains(out, "publish • host • realtime") {
 		t.Fatalf("help should include banner, got %q", out)
 	}
 	if strings.Contains(out, "\x1b[") {
@@ -69,7 +70,7 @@ func TestHelpPrintsPlainBannerWhenCaptured(t *testing.T) {
 }
 
 func TestFlinkBannerColorRendering(t *testing.T) {
-	out := FlinkBanner(true)
+	out := banner.Render(true)
 	if !strings.Contains(out, "\x1b[") || !strings.Contains(out, "flink") {
 		t.Fatalf("color banner should contain ANSI and text, got %q", out)
 	}

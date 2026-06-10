@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/csweichel/flink/shared/banner"
 )
 
 func TestSiteCreateUsesTenantBasicAuthAndPrintsTenantURL(t *testing.T) {
@@ -59,11 +62,11 @@ func TestSiteWritePublishesFileContentToRequestedPath(t *testing.T) {
 			t.Fatalf("missing or wrong auth")
 		}
 		gotTargetPath = r.URL.Query().Get("path")
-		var body map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
 			t.Fatal(err)
 		}
-		gotContent = body["content"]
+		gotContent = string(body)
 		_ = json.NewEncoder(w).Encode(map[string]string{"path": gotTargetPath})
 	}))
 	defer server.Close()
@@ -80,6 +83,85 @@ func TestSiteWritePublishesFileContentToRequestedPath(t *testing.T) {
 	}
 	if !strings.Contains(out, "published pages/home.html") {
 		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestSiteWritePublishesDirectoryTree(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<h1>home</h1>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "assets", "app.css"), []byte("body{color:red}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	gotFiles := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/api/sites/demo/files" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		if user, password, ok := r.BasicAuth(); !ok || user != "alice" || password != "secret" {
+			t.Fatalf("missing or wrong auth")
+		}
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotFiles[r.URL.Query().Get("path")] = string(b)
+		_ = json.NewEncoder(w).Encode(map[string]string{"path": r.URL.Query().Get("path")})
+	}))
+	defer server.Close()
+
+	out, err := runCommand("site", "write", "demo", dir, "public", "--server", server.URL, "--tenant", "alice", "--password", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotFiles["public/index.html"] != "<h1>home</h1>" || gotFiles["public/assets/app.css"] != "body{color:red}" {
+		t.Fatalf("unexpected published files: %#v", gotFiles)
+	}
+	if !strings.Contains(out, "published 2 files") {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestSiteFilesAndDeleteFileUseExpectedAPI(t *testing.T) {
+	var deletedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user, password, ok := r.BasicAuth(); !ok || user != "alice" || password != "secret" {
+			t.Fatalf("missing or wrong auth")
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/sites/demo/files":
+			if r.URL.Query().Get("prefix") != "assets" {
+				t.Fatalf("unexpected prefix: %q", r.URL.Query().Get("prefix"))
+			}
+			_ = json.NewEncoder(w).Encode([]siteFileInfo{{Path: "assets/app.css", Size: 15}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/sites/demo/files":
+			deletedPath = r.URL.Query().Get("path")
+			_ = json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	out, err := runCommand("site", "files", "demo", "assets", "--server", server.URL, "--tenant", "alice", "--password", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "assets/app.css") || !strings.Contains(out, "15") {
+		t.Fatalf("unexpected files output: %q", out)
+	}
+
+	out, err = runCommand("site", "delete-file", "demo", "assets/app.css", "--server", server.URL, "--tenant", "alice", "--password", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deletedPath != "assets/app.css" || !strings.Contains(out, "deleted assets/app.css") {
+		t.Fatalf("delete file not observed: path=%q output=%q", deletedPath, out)
 	}
 }
 
@@ -131,7 +213,7 @@ func TestHelpPrintsPlainBannerWhenCaptured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "▟██████▙") || !strings.Contains(out, "live HTML/JS prototypes") {
+	if !strings.Contains(out, "████████████████") || !strings.Contains(out, "live HTML/JS prototypes") {
 		t.Fatalf("help should include banner, got %q", out)
 	}
 	if strings.Contains(out, "\x1b[") {
@@ -140,7 +222,7 @@ func TestHelpPrintsPlainBannerWhenCaptured(t *testing.T) {
 }
 
 func TestFlinkBannerColorRendering(t *testing.T) {
-	out := FlinkBanner(true)
+	out := banner.Render(true)
 	if !strings.Contains(out, "\x1b[") || !strings.Contains(out, "flink") {
 		t.Fatalf("color banner should contain ANSI and text, got %q", out)
 	}
