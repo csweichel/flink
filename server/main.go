@@ -84,7 +84,7 @@ func runTenants(args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: flink-server tenants <pending|approve|deny> [username]")
+		return fmt.Errorf("usage: flink-server tenants <pending|list|approve|deny|bootstrap> [username]")
 	}
 	backend, err := storage.Open(cfg.StorageDriver, cfg.DataDir)
 	if err != nil {
@@ -127,6 +127,15 @@ func runTenants(args []string) error {
 			return err
 		}
 		fmt.Printf("denied %s\n", tenant.Username)
+	case "bootstrap":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: flink-server tenants bootstrap <username> <password>")
+		}
+		tenant, err := store.CreateApprovedTenant(args[1], args[2])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("bootstrapped %s\n", tenant.Username)
 	default:
 		return fmt.Errorf("unknown tenants command %q", args[0])
 	}

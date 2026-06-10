@@ -108,7 +108,14 @@ Ona can run the same server with:
 gitpod automations service start flink
 ```
 
-That service opens port `8080` as `flink` and waits for `/_flink`.
+That service opens port `8080` as `flink`, starts the real Flink server, and bootstraps an approved demo tenant before serving traffic:
+
+```text
+username: demo
+password: flink
+```
+
+The service readiness check fetches `/flink.js` and calls `/api/sites` with those credentials, so a ready service is also ready to sign in and use. Override the demo credentials with `FLINK_DEMO_TENANT` and `FLINK_DEMO_PASSWORD` in the automation environment.
 
 ## Tenants And Auth
 
@@ -128,6 +135,12 @@ flink-server tenants pending
 flink-server tenants approve alice
 flink-server tenants deny alice
 flink-server tenants list
+```
+
+For local demos and automation, bootstrap an approved tenant directly:
+
+```sh
+flink-server tenants bootstrap demo flink
 ```
 
 Use the same `--data` and `--storage` flags on tenant commands when the server is not using defaults:

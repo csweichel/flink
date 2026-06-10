@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"flink/server/api"
+	"flink/server/storage"
 )
 
 func TestRunInitWritesDefaultYAMLConfig(t *testing.T) {
@@ -72,5 +76,31 @@ func TestParseTenantCommandArgsUsesConfigAndFlagOverrides(t *testing.T) {
 	}
 	if cfg.DataDir != "/from-file" || cfg.StorageDriver != "bbolt" {
 		t.Fatalf("unexpected config: %#v", cfg)
+	}
+}
+
+func TestRunTenantsBootstrapCreatesApprovedTenant(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := runTenants([]string{"bootstrap", "demo", "secret", "--data", dir, "--storage", "file"}); err != nil {
+		t.Fatal(err)
+	}
+
+	backend, err := storage.Open("file", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Close()
+
+	store := api.NewStore(backend, "")
+	tenant, err := store.AuthenticateTenant("demo", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tenant.Username != "demo" || tenant.Status != api.TenantApproved {
+		t.Fatalf("unexpected tenant: %#v", tenant)
 	}
 }

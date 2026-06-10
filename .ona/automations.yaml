@@ -6,9 +6,18 @@ services:
       - manual
     commands:
       start: |
+        set -eu
+        export DATA="${DATA:-./data}"
+        export STORAGE="${STORAGE:-file}"
+        export FLINK_DEMO_TENANT="${FLINK_DEMO_TENANT:-demo}"
+        export FLINK_DEMO_PASSWORD="${FLINK_DEMO_PASSWORD:-flink}"
         gitpod environment port open 8080 --name flink --protocol http || true
-        make run
-      ready: curl -fsS http://localhost:8080/flink.js >/dev/null
+        go run ./server tenants bootstrap "$FLINK_DEMO_TENANT" "$FLINK_DEMO_PASSWORD" --data "$DATA" --storage "$STORAGE"
+        printf 'Flink demo login: username=%s password=%s\n' "$FLINK_DEMO_TENANT" "$FLINK_DEMO_PASSWORD"
+        make run DATA="$DATA" STORAGE="$STORAGE"
+      ready: |
+        curl -fsS http://localhost:8080/flink.js >/dev/null
+        curl -fsS -u "${FLINK_DEMO_TENANT:-demo}:${FLINK_DEMO_PASSWORD:-flink}" http://localhost:8080/api/sites >/dev/null
 
 tasks:
   build:
