@@ -70,6 +70,7 @@ func NewRootCommandWithOptions(options Options) *cobra.Command {
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.PersistentFlags().StringVar(&configPath, "config", "", "YAML config file")
+	installBannerHelp(root)
 	root.AddCommand(newInitCommand(&configPath, out))
 	root.AddCommand(newTenantsCommand(&configPath, out))
 	return root

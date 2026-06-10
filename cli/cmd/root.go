@@ -55,6 +55,7 @@ func NewRootCommandWithOptions(options Options) *cobra.Command {
 	root.PersistentFlags().StringVar(&serverURL, "server", serverURL, "Flink server URL")
 	root.PersistentFlags().StringVar(&username, "tenant", username, "approved Flink tenant username")
 	root.PersistentFlags().StringVar(&password, "password", password, "Flink tenant password")
+	installBannerHelp(root)
 
 	site := &cobra.Command{Use: "site", Short: "Manage your sites on a Flink server"}
 	site.AddCommand(siteCreateCommand(&serverURL, &username, &password))

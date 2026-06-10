@@ -126,6 +126,26 @@ func TestMissingTenantCredentialsFailBeforeNetwork(t *testing.T) {
 	}
 }
 
+func TestHelpPrintsPlainBannerWhenCaptured(t *testing.T) {
+	out, err := runCommand("--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "▟██████▙") || !strings.Contains(out, "live HTML/JS prototypes") {
+		t.Fatalf("help should include banner, got %q", out)
+	}
+	if strings.Contains(out, "\x1b[") {
+		t.Fatalf("captured help should not contain ANSI color: %q", out)
+	}
+}
+
+func TestFlinkBannerColorRendering(t *testing.T) {
+	out := FlinkBanner(true)
+	if !strings.Contains(out, "\x1b[") || !strings.Contains(out, "flink") {
+		t.Fatalf("color banner should contain ANSI and text, got %q", out)
+	}
+}
+
 func runCommand(args ...string) (string, error) {
 	cmd := NewRootCommandWithOptions(Options{ServerURL: "http://localhost:8080"})
 	var out bytes.Buffer
