@@ -78,12 +78,34 @@ function App() {
     await refresh();
   }
 
-  async function selectSite(nextSlug: string) {
+  async function selectSite(nextSlug: string, nextPath = filePath || defaultPath) {
     setCurrent(nextSlug);
-    const p = filePath || defaultPath;
-    const out = await api<SiteFile>(`/api/sites/${nextSlug}/files?path=${encodeURIComponent(p)}`);
+    setFilePath(nextPath);
+    const out = await api<SiteFile>(`/api/sites/${nextSlug}/files?path=${encodeURIComponent(nextPath)}`);
     setContent(out.content);
-    setStatus(`Loaded ${p}`);
+    setStatus(`Loaded ${nextPath}`);
+  }
+
+  async function deleteCurrentSite() {
+    if (!current) {
+      return;
+    }
+    const siteSlug = current;
+    if (!window.confirm(`Delete "${siteSlug}" and all of its files, data, and uploads?`)) {
+      return;
+    }
+    await api<{ deleted: true }>(`/api/sites/${siteSlug}`, { method: "DELETE" });
+    const remaining = sites.filter((site) => site.slug !== siteSlug);
+    setSites(remaining);
+    setCurrent("");
+    setContent("");
+    setFilePath(defaultPath);
+    if (remaining[0]) {
+      await selectSite(remaining[0].slug, defaultPath);
+      setStatus(`Deleted ${siteSlug}. Loaded ${remaining[0].slug}.`);
+      return;
+    }
+    setStatus(`Deleted ${siteSlug}.`);
   }
 
   async function loadFile() {
@@ -188,6 +210,14 @@ function App() {
             </button>
             <button className="rounded-md border border-teal-700 bg-teal-700 px-3 py-2 text-sm font-medium text-white" type="button" onClick={() => saveFile().catch((err: Error) => setStatus(err.message))}>
               Save
+            </button>
+            <button
+              className="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 disabled:cursor-not-allowed disabled:border-stone-200 disabled:text-neutral-400"
+              type="button"
+              disabled={!current}
+              onClick={() => deleteCurrentSite().catch((err: Error) => setStatus(err.message))}
+            >
+              Delete site
             </button>
             <select className="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm" defaultValue="" onChange={(event) => loadExample(event.target.value)}>
               <option value="">Examples...</option>
