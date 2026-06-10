@@ -310,7 +310,7 @@ func (s *Store) ListSites(tenant string) ([]SiteMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	var sites []SiteMeta
+	sites := []SiteMeta{}
 	for _, entry := range entries {
 		var meta SiteMeta
 		if err := json.Unmarshal(entry.Value, &meta); err == nil && ValidSlug(meta.Slug) {

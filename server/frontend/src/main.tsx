@@ -58,10 +58,11 @@ function App() {
   async function refresh() {
     const me = await api<Tenant>("/api/auth/me");
     setTenant(me);
-    const nextSites = await api<SiteMeta[]>("/api/sites");
-    setSites(nextSites);
-    if (!current && nextSites[0]) {
-      await selectSite(nextSites[0].slug);
+    const nextSites = (await api<SiteMeta[] | null>("/api/sites")) ?? [];
+    const safeSites = Array.isArray(nextSites) ? nextSites : [];
+    setSites(safeSites);
+    if (!current && safeSites[0]) {
+      await selectSite(safeSites[0].slug);
     }
   }
 

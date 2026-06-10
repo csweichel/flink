@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,18 @@ func TestCreateEditHostAndDataAPI(t *testing.T) {
 	res = request(t, a, http.MethodGet, "/api/public/hello/data/note", nil, "")
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("saved")) {
 		t.Fatalf("data not saved: %d %s", res.Code, res.Body.String())
+	}
+}
+
+func TestListSitesReturnsEmptyArray(t *testing.T) {
+	a := testApp(t)
+
+	res := request(t, a, http.MethodGet, "/api/sites", nil, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("site list failed: %d %s", res.Code, res.Body.String())
+	}
+	if got := strings.TrimSpace(res.Body.String()); got != "[]" {
+		t.Fatalf("empty site list should be [], got %q", got)
 	}
 }
 
