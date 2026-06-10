@@ -18,12 +18,13 @@ import (
 )
 
 type serverConfig struct {
-	Addr             string                  `yaml:"addr"`
-	DataDir          string                  `yaml:"dataDir"`
-	StorageDriver    string                  `yaml:"storage"`
-	BaseHost         string                  `yaml:"baseHost"`
-	AI               api.AIConfig            `yaml:"ai"`
-	BootstrapTenants []bootstrapTenantConfig `yaml:"bootstrapTenants"`
+	Addr               string                  `yaml:"addr"`
+	DataDir            string                  `yaml:"dataDir"`
+	StorageDriver      string                  `yaml:"storage"`
+	BaseHost           string                  `yaml:"baseHost"`
+	AutoApproveTenants bool                    `yaml:"autoApproveTenants"`
+	AI                 api.AIConfig            `yaml:"ai"`
+	BootstrapTenants   []bootstrapTenantConfig `yaml:"bootstrapTenants"`
 }
 
 type bootstrapTenantConfig struct {
@@ -63,10 +64,11 @@ func runServe(args []string) error {
 	}
 
 	app := serverapp.New(serverapp.Config{
-		DataDir:       cfg.DataDir,
-		StorageDriver: cfg.StorageDriver,
-		BaseHost:      cfg.BaseHost,
-		AI:            cfg.AI,
+		DataDir:            cfg.DataDir,
+		StorageDriver:      cfg.StorageDriver,
+		BaseHost:           cfg.BaseHost,
+		AutoApproveTenants: cfg.AutoApproveTenants,
+		AI:                 cfg.AI,
 	})
 	if err := app.Init(); err != nil {
 		return err
@@ -96,7 +98,7 @@ func runTenants(args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: flink-server tenants <pending|list|approve|deny|bootstrap> [username]")
+		return fmt.Errorf("usage: flink-server tenants <list|pending|get|create|approve|deny|reset-password|delete|bootstrap> [args]")
 	}
 	backend, err := storage.Open(cfg.StorageDriver, cfg.DataDir)
 	if err != nil {
@@ -109,18 +111,47 @@ func runTenants(args []string) error {
 	store := api.NewStore(backend, "")
 
 	switch args[0] {
-	case "pending", "list":
-		status := api.TenantPending
-		if args[0] == "list" {
-			status = ""
+	case "pending":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: flink-server tenants pending")
 		}
-		tenants, err := store.ListTenants(status)
+		if err := printTenants(store, api.TenantPending); err != nil {
+			return err
+		}
+	case "list":
+		if len(args) > 2 {
+			return fmt.Errorf("usage: flink-server tenants list [pending|approved|denied|all]")
+		}
+		status := ""
+		if len(args) == 2 && args[1] != "all" {
+			switch args[1] {
+			case api.TenantPending, api.TenantApproved, api.TenantDenied:
+				status = args[1]
+			default:
+				return fmt.Errorf("unknown tenant status %q", args[1])
+			}
+		}
+		if err := printTenants(store, status); err != nil {
+			return err
+		}
+	case "get":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: flink-server tenants get <username>")
+		}
+		tenant, err := store.ReadTenant(args[1])
 		if err != nil {
 			return err
 		}
-		for _, tenant := range tenants {
-			fmt.Printf("%-24s %-10s %s\n", tenant.Username, tenant.Status, tenant.UpdatedAt.Format(time.RFC3339))
+		fmt.Printf("%-24s %-10s created=%s updated=%s\n", tenant.Username, tenant.Status, tenant.CreatedAt.Format(time.RFC3339), tenant.UpdatedAt.Format(time.RFC3339))
+	case "create":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: flink-server tenants create <username> <password>")
 		}
+		tenant, err := store.RegisterApprovedTenant(args[1], args[2])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("created %s\n", tenant.Username)
 	case "approve":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: flink-server tenants approve <username>")
@@ -139,6 +170,23 @@ func runTenants(args []string) error {
 			return err
 		}
 		fmt.Printf("denied %s\n", tenant.Username)
+	case "reset-password":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: flink-server tenants reset-password <username> <password>")
+		}
+		tenant, err := store.ResetTenantPassword(args[1], args[2])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("reset password for %s\n", tenant.Username)
+	case "delete":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: flink-server tenants delete <username>")
+		}
+		if err := store.DeleteTenant(args[1]); err != nil {
+			return err
+		}
+		fmt.Printf("deleted %s\n", args[1])
 	case "bootstrap":
 		if len(args) != 3 {
 			return fmt.Errorf("usage: flink-server tenants bootstrap <username> <password>")
@@ -150,6 +198,17 @@ func runTenants(args []string) error {
 		fmt.Printf("bootstrapped %s\n", tenant.Username)
 	default:
 		return fmt.Errorf("unknown tenants command %q", args[0])
+	}
+	return nil
+}
+
+func printTenants(store *api.Store, status string) error {
+	tenants, err := store.ListTenants(status)
+	if err != nil {
+		return err
+	}
+	for _, tenant := range tenants {
+		fmt.Printf("%-24s %-10s %s\n", tenant.Username, tenant.Status, tenant.UpdatedAt.Format(time.RFC3339))
 	}
 	return nil
 }
@@ -215,10 +274,11 @@ func parseTenantCommandArgs(args []string) ([]string, serverConfig, error) {
 
 func defaultServerConfig() serverConfig {
 	return serverConfig{
-		Addr:          ":8080",
-		DataDir:       "./data",
-		StorageDriver: "file",
-		BaseHost:      "",
+		Addr:               ":8080",
+		DataDir:            "./data",
+		StorageDriver:      "file",
+		BaseHost:           "",
+		AutoApproveTenants: false,
 		AI: api.AIConfig{
 			BaseURL: "https://api.openai.com/v1",
 			Model:   "gpt-4.1-mini",
@@ -266,6 +326,9 @@ func applyConfigValues(cfg *serverConfig, override serverConfig) {
 	}
 	if override.BaseHost != "" {
 		cfg.BaseHost = override.BaseHost
+	}
+	if override.AutoApproveTenants {
+		cfg.AutoApproveTenants = true
 	}
 	if override.AI.APIKey != "" {
 		cfg.AI.APIKey = override.AI.APIKey

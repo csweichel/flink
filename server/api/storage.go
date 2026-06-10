@@ -82,6 +82,18 @@ func (s *Store) Init() error {
 }
 
 func (s *Store) RegisterTenant(username, password string) (PublicTenant, error) {
+	return s.createTenant(username, password, TenantPending, false)
+}
+
+func (s *Store) RegisterApprovedTenant(username, password string) (PublicTenant, error) {
+	return s.createTenant(username, password, TenantApproved, false)
+}
+
+func (s *Store) CreateApprovedTenant(username, password string) (PublicTenant, error) {
+	return s.createTenant(username, password, TenantApproved, true)
+}
+
+func (s *Store) createTenant(username, password, status string, overwrite bool) (PublicTenant, error) {
 	username = strings.ToLower(strings.TrimSpace(username))
 	if !ValidSlug(username) {
 		return PublicTenant{}, fmt.Errorf("invalid username %q: use lowercase letters, numbers, and dashes", username)
@@ -89,11 +101,6 @@ func (s *Store) RegisterTenant(username, password string) (PublicTenant, error) 
 	if strings.TrimSpace(password) == "" {
 		return PublicTenant{}, fmt.Errorf("password is required")
 	}
-	if _, err := s.ReadTenant(username); err == nil {
-		return PublicTenant{}, fmt.Errorf("tenant %q already exists", username)
-	} else if !errors.Is(err, ErrNotFound) {
-		return PublicTenant{}, err
-	}
 	hash, err := hashPassword(password)
 	if err != nil {
 		return PublicTenant{}, err
@@ -102,9 +109,16 @@ func (s *Store) RegisterTenant(username, password string) (PublicTenant, error) 
 	meta := TenantMeta{
 		Username:     username,
 		PasswordHash: hash,
-		Status:       TenantPending,
+		Status:       status,
 		CreatedAt:    now,
 		UpdatedAt:    now,
+	}
+	if existing, err := s.ReadTenant(username); err == nil && overwrite {
+		meta.CreatedAt = existing.CreatedAt
+	} else if err == nil {
+		return PublicTenant{}, fmt.Errorf("tenant %q already exists", username)
+	} else if !errors.Is(err, ErrNotFound) {
+		return PublicTenant{}, err
 	}
 	if err := s.writeTenant(meta); err != nil {
 		return PublicTenant{}, err
@@ -112,29 +126,21 @@ func (s *Store) RegisterTenant(username, password string) (PublicTenant, error) 
 	return meta.Public(), nil
 }
 
-func (s *Store) CreateApprovedTenant(username, password string) (PublicTenant, error) {
+func (s *Store) ResetTenantPassword(username, password string) (PublicTenant, error) {
 	username = strings.ToLower(strings.TrimSpace(username))
-	if !ValidSlug(username) {
-		return PublicTenant{}, fmt.Errorf("invalid username %q", username)
-	}
 	if strings.TrimSpace(password) == "" {
 		return PublicTenant{}, fmt.Errorf("password is required")
+	}
+	meta, err := s.ReadTenant(username)
+	if err != nil {
+		return PublicTenant{}, err
 	}
 	hash, err := hashPassword(password)
 	if err != nil {
 		return PublicTenant{}, err
 	}
-	now := time.Now().UTC()
-	meta := TenantMeta{
-		Username:     username,
-		PasswordHash: hash,
-		Status:       TenantApproved,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	if existing, err := s.ReadTenant(username); err == nil {
-		meta.CreatedAt = existing.CreatedAt
-	}
+	meta.PasswordHash = hash
+	meta.UpdatedAt = time.Now().UTC()
 	if err := s.writeTenant(meta); err != nil {
 		return PublicTenant{}, err
 	}
@@ -166,6 +172,36 @@ func (s *Store) ApproveTenant(username string) (PublicTenant, error) {
 
 func (s *Store) DenyTenant(username string) (PublicTenant, error) {
 	return s.setTenantStatus(username, TenantDenied)
+}
+
+func (s *Store) DeleteTenant(username string) error {
+	username = strings.ToLower(strings.TrimSpace(username))
+	if !ValidSlug(username) {
+		return fmt.Errorf("invalid username %q", username)
+	}
+	ctx := context.Background()
+	sites, err := s.ListSites(username)
+	if err != nil {
+		return err
+	}
+	for _, site := range sites {
+		if err := s.DeleteSite(username, site.Slug); err != nil {
+			return err
+		}
+	}
+	sessions, err := s.backend.List(ctx, sessionCollection, "")
+	if err != nil {
+		return err
+	}
+	for _, entry := range sessions {
+		var session Session
+		if err := json.Unmarshal(entry.Value, &session); err == nil && session.Username == username {
+			if err := s.backend.Delete(ctx, sessionCollection, entry.Key); err != nil {
+				return err
+			}
+		}
+	}
+	return s.backend.Delete(ctx, tenantCollection, username)
 }
 
 func (s *Store) AuthenticateTenant(username, password string) (PublicTenant, error) {

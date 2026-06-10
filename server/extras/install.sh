@@ -107,6 +107,7 @@ addr: :8080
 dataDir: $DATA_DIR
 storage: bbolt
 baseHost: ""
+autoApproveTenants: false
 ai:
   apiKey: ""
   baseURL: https://api.openai.com/v1

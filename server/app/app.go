@@ -21,10 +21,11 @@ import (
 )
 
 type Config struct {
-	DataDir       string `yaml:"dataDir"`
-	StorageDriver string `yaml:"storage"`
-	BaseHost      string `yaml:"baseHost"`
-	AI            api.AIConfig
+	DataDir            string `yaml:"dataDir"`
+	StorageDriver      string `yaml:"storage"`
+	BaseHost           string `yaml:"baseHost"`
+	AutoApproveTenants bool   `yaml:"autoApproveTenants"`
+	AI                 api.AIConfig
 }
 
 type App struct {
@@ -185,7 +186,26 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, registerHTML(err.Error()))
 			return
 		}
-		tenant, err := a.store.RegisterTenant(r.Form.Get("username"), r.Form.Get("password"))
+		username := r.Form.Get("username")
+		password := r.Form.Get("password")
+		if a.config.AutoApproveTenants {
+			tenant, err := a.store.RegisterApprovedTenant(username, password)
+			if err != nil {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, registerHTML(err.Error()))
+				return
+			}
+			session, err := a.store.CreateSession(tenant.Username, 7*24*time.Hour)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "flink_session", Value: session.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
+			http.Redirect(w, r, "/_flink", http.StatusSeeOther)
+			return
+		}
+		tenant, err := a.store.RegisterTenant(username, password)
 		if err != nil {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusBadRequest)

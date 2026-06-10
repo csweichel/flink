@@ -97,6 +97,46 @@ func TestTenantRegistrationApprovalAndLogin(t *testing.T) {
 	}
 }
 
+func TestTenantRegistrationAutoApproveCreatesSession(t *testing.T) {
+	a := New(Config{DataDir: t.TempDir(), AutoApproveTenants: true})
+	if err := a.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	form := bytes.NewBufferString("username=instant&password=secret")
+	req := httptest.NewRequest(http.MethodPost, "/_flink/register", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	out := httptest.NewRecorder()
+	a.ServeHTTP(out, req)
+	if out.Code != http.StatusSeeOther || out.Header().Get("Location") != "/_flink" || len(out.Result().Cookies()) == 0 {
+		t.Fatalf("auto-approved registration should sign in: %d %s", out.Code, out.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/sites", nil)
+	req.SetBasicAuth("instant", "secret")
+	out = httptest.NewRecorder()
+	a.ServeHTTP(out, req)
+	if out.Code != http.StatusOK {
+		t.Fatalf("auto-approved tenant should authenticate, got %d: %s", out.Code, out.Body.String())
+	}
+
+	form = bytes.NewBufferString("username=instant&password=hijack")
+	req = httptest.NewRequest(http.MethodPost, "/_flink/register", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	out = httptest.NewRecorder()
+	a.ServeHTTP(out, req)
+	if out.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate auto-approved registration should fail, got %d", out.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/sites", nil)
+	req.SetBasicAuth("instant", "hijack")
+	out = httptest.NewRecorder()
+	a.ServeHTTP(out, req)
+	if out.Code != http.StatusUnauthorized {
+		t.Fatalf("duplicate registration should not reset password, got %d", out.Code)
+	}
+}
+
 func TestTenantSessionCookieAuthenticatesDashboardAndAPI(t *testing.T) {
 	a := testApp(t)
 	session, err := a.store.CreateSession(testTenant, time.Hour)

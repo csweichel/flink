@@ -13,6 +13,7 @@ services:
         dataDir: ./data
         storage: file
         baseHost: ""
+        autoApproveTenants: true
         ai:
           apiKey: ""
           baseURL: https://api.openai.com/v1

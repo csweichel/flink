@@ -36,6 +36,7 @@ addr: :8080
 dataDir: ./data
 storage: file
 baseHost: ""
+autoApproveTenants: false
 ai:
   apiKey: ""
   baseURL: https://api.openai.com/v1
@@ -87,6 +88,7 @@ addr: :8080
 dataDir: /var/lib/flink
 storage: bbolt
 baseHost: ""
+autoApproveTenants: false
 ai:
   apiKey: ""
   baseURL: https://api.openai.com/v1
@@ -135,13 +137,17 @@ Everything user-facing happens inside an approved tenant:
 - WebSocket rooms
 - CLI publishing
 
-Users register at `/_flink/register`. New registrations are `pending` until a server operator approves or denies them:
+Users register at `/_flink/register`. By default, new registrations are `pending` until a server operator approves or denies them:
 
 ```sh
+flink-server tenants list
+flink-server tenants list pending
 flink-server tenants pending
+flink-server tenants get alice
 flink-server tenants approve alice
 flink-server tenants deny alice
-flink-server tenants list
+flink-server tenants reset-password alice new-secret
+flink-server tenants delete alice
 ```
 
 Tenant operator commands read storage settings from the same YAML config:
@@ -151,6 +157,14 @@ flink-server tenants pending --config /etc/flink/flink.yaml
 flink-server tenants approve alice --config /etc/flink/flink.yaml
 ```
 
+In a high-trust environment, registrations can be approved immediately:
+
+```yaml
+autoApproveTenants: true
+```
+
+When that is enabled, registration signs the tenant into the dashboard immediately.
+
 For local demos and automation, either add an approved bootstrap tenant to the config:
 
 ```yaml
@@ -159,9 +173,10 @@ bootstrapTenants:
     password: flink
 ```
 
-or create one directly against the configured storage:
+or create an approved tenant directly against the configured storage:
 
 ```sh
+flink-server tenants create demo flink --config flink.yaml
 flink-server tenants bootstrap demo flink --config flink.yaml
 ```
 
@@ -182,6 +197,7 @@ addr: :8080
 dataDir: ./data
 storage: file
 baseHost: ""
+autoApproveTenants: false
 ai:
   apiKey: ""
   baseURL: https://api.openai.com/v1
