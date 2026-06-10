@@ -12,6 +12,7 @@ cli/main.go          user CLI binary entrypoint
 cli/cmd/             user CLI commands and HTTP client
 server/              server module, HTTP routing, APIs, frontend embedding
 server/main.go       operator server binary entrypoint
+server/cmd/          Cobra commands for serving, config init, and tenant management
 server/app/          HTTP app package, tenant auth, routing, storage wiring
 server/api/          site storage, JSON data, uploads, realtime hub
 server/extras/       systemd unit and curlable install/update script

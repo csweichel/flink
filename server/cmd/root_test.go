@@ -1,6 +1,7 @@
-package main
+package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -12,12 +13,24 @@ import (
 	"flink/server/storage"
 )
 
+func runCommand(args ...string) (string, error) {
+	var out bytes.Buffer
+	command := NewRootCommandWithOptions(Options{Out: &out, Err: &out})
+	command.SetArgs(args)
+	err := command.Execute()
+	return out.String(), err
+}
+
 func TestRunInitWritesDefaultYAMLConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "flink.yaml")
 
-	if err := runInit([]string{"--config", path}); err != nil {
+	out, err := runCommand("--config", path, "init")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(out, "wrote "+path) {
+		t.Fatalf("unexpected output: %q", out)
 	}
 
 	b, err := os.ReadFile(path)
@@ -37,7 +50,7 @@ func TestRunInitWritesDefaultYAMLConfig(t *testing.T) {
 		}
 	}
 
-	if err := runInit([]string{"--config", path}); err == nil {
+	if _, err := runCommand("--config", path, "init"); err == nil {
 		t.Fatal("expected init to refuse overwriting existing config")
 	}
 }
@@ -80,24 +93,21 @@ bootstrapTenants:
 	}
 }
 
-func TestParseTenantCommandArgsUsesConfig(t *testing.T) {
+func TestTenantCommandsUseConfigFlag(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "flink.yaml")
 	if err := os.WriteFile(path, []byte("addr: :9000\ndataDir: /from-file\nstorage: bbolt\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	args, cfg, err := parseTenantCommandArgs([]string{"approve", "alice", "--config", path})
+	cfg, err := loadServerConfig(path)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(args) != 2 || args[0] != "approve" || args[1] != "alice" {
-		t.Fatalf("unexpected positional args: %#v", args)
 	}
 	if cfg.DataDir != "/from-file" || cfg.StorageDriver != "bbolt" {
 		t.Fatalf("unexpected config: %#v", cfg)
 	}
-	if _, _, err := parseTenantCommandArgs([]string{"approve", "alice", "--storage", "file", "--config", path}); err == nil {
+	if _, err := runCommand("tenants", "approve", "alice", "--storage", "file", "--config", path); err == nil {
 		t.Fatal("expected server setting flag to be rejected")
 	}
 }
@@ -110,7 +120,7 @@ func TestRunTenantsBootstrapCreatesApprovedTenant(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := runTenants([]string{"bootstrap", "demo", "secret", "--config", configPath}); err != nil {
+	if _, err := runCommand("tenants", "bootstrap", "demo", "secret", "--config", configPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -143,8 +153,8 @@ func TestRunTenantsManagementCommands(t *testing.T) {
 	run := func(args ...string) {
 		t.Helper()
 		args = append(args, "--config", configPath)
-		if err := runTenants(args); err != nil {
-			t.Fatalf("runTenants(%v): %v", args, err)
+		if _, err := runCommand(append([]string{"tenants"}, args...)...); err != nil {
+			t.Fatalf("runCommand(%v): %v", args, err)
 		}
 	}
 	store := func() (*api.Store, storage.Backend) {
@@ -160,7 +170,7 @@ func TestRunTenantsManagementCommands(t *testing.T) {
 	}
 
 	run("create", "demo", "secret")
-	if err := runTenants([]string{"create", "demo", "other-secret", "--config", configPath}); err == nil {
+	if _, err := runCommand("tenants", "create", "demo", "other-secret", "--config", configPath); err == nil {
 		t.Fatal("create should reject an existing tenant")
 	}
 	s, backend := store()
