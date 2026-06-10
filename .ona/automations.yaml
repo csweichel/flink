@@ -7,17 +7,26 @@ services:
     commands:
       start: |
         set -eu
-        export DATA="${DATA:-./data}"
-        export STORAGE="${STORAGE:-file}"
-        export FLINK_DEMO_TENANT="${FLINK_DEMO_TENANT:-demo}"
-        export FLINK_DEMO_PASSWORD="${FLINK_DEMO_PASSWORD:-flink}"
+        mkdir -p .flink
+        cat > .flink/ona.yaml <<'EOF'
+        addr: :8080
+        dataDir: ./data
+        storage: file
+        baseHost: ""
+        ai:
+          apiKey: ""
+          baseURL: https://api.openai.com/v1
+          model: gpt-4.1-mini
+        bootstrapTenants:
+          - username: demo
+            password: flink
+        EOF
         gitpod environment port open 8080 --name flink --protocol http || true
-        go run ./server tenants bootstrap "$FLINK_DEMO_TENANT" "$FLINK_DEMO_PASSWORD" --data "$DATA" --storage "$STORAGE"
-        printf 'Flink demo login: username=%s password=%s\n' "$FLINK_DEMO_TENANT" "$FLINK_DEMO_PASSWORD"
-        make run DATA="$DATA" STORAGE="$STORAGE"
+        printf 'Flink demo login: username=demo password=flink\n'
+        make run CONFIG=.flink/ona.yaml
       ready: |
         curl -fsS http://localhost:8080/flink.js >/dev/null
-        curl -fsS -u "${FLINK_DEMO_TENANT:-demo}:${FLINK_DEMO_PASSWORD:-flink}" http://localhost:8080/api/sites >/dev/null
+        curl -fsS -u demo:flink http://localhost:8080/api/sites >/dev/null
 
 tasks:
   build:

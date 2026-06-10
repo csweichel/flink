@@ -1,9 +1,6 @@
 CLI_BINARY := bin/flink
 SERVER_BINARY := bin/flink-server
-ADDR ?= :8080
-DATA ?= ./data
-STORAGE ?= file
-BASE_HOST ?=
+CONFIG ?= .flink/dev.yaml
 CLIENT_DIR := client
 FRONTEND_DIR := server/frontend
 
@@ -36,7 +33,9 @@ test: client-test frontend-build
 	go test ./cli/... ./server/...
 
 run: frontend-build
-	go run ./server --addr $(ADDR) --data $(DATA) --storage $(STORAGE) $(if $(BASE_HOST),--base-host $(BASE_HOST),)
+	mkdir -p $(dir $(CONFIG))
+	test -f $(CONFIG) || go run ./server init --config $(CONFIG)
+	go run ./server --config $(CONFIG)
 
 clean:
 	rm -rf bin $(CLIENT_DIR)/dist

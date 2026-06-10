@@ -248,7 +248,6 @@ func TestDeleteSiteOverAPI(t *testing.T) {
 }
 
 func TestAIEndpointWithoutKeyIsStable(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "")
 	a := testApp(t)
 	postJSON(t, a, "/api/sites", map[string]string{"slug": "ai"})
 
@@ -281,10 +280,15 @@ func TestAIEndpointCallsOpenAICompatibleResponsesAPI(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	t.Setenv("OPENAI_API_KEY", "test-key")
-	t.Setenv("OPENAI_BASE_URL", upstream.URL)
-	t.Setenv("OPENAI_MODEL", "mock-model")
-	a := testApp(t)
+	a := testAppWithConfig(t, Config{
+		DataDir:  t.TempDir(),
+		BaseHost: "quick.internal",
+		AI: api.AIConfig{
+			APIKey:  "test-key",
+			BaseURL: upstream.URL,
+			Model:   "mock-model",
+		},
+	})
 	postJSON(t, a, "/api/sites", map[string]string{"slug": "ai"})
 
 	res := request(t, a, http.MethodPost, "/api/public/ai/ai", bytes.NewReader([]byte(`{"prompt":"hello","instructions":"be brief","maxOutputTokens":32}`)), "application/json")
@@ -391,7 +395,12 @@ func TestBboltStorageDriver(t *testing.T) {
 
 func testApp(t *testing.T) *App {
 	t.Helper()
-	a := New(Config{DataDir: t.TempDir(), BaseHost: "quick.internal"})
+	return testAppWithConfig(t, Config{DataDir: t.TempDir(), BaseHost: "quick.internal"})
+}
+
+func testAppWithConfig(t *testing.T, config Config) *App {
+	t.Helper()
+	a := New(config)
 	if err := a.Init(); err != nil {
 		t.Fatal(err)
 	}

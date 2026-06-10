@@ -24,6 +24,7 @@ type Config struct {
 	DataDir       string `yaml:"dataDir"`
 	StorageDriver string `yaml:"storage"`
 	BaseHost      string `yaml:"baseHost"`
+	AI            api.AIConfig
 }
 
 type App struct {
@@ -31,6 +32,7 @@ type App struct {
 	backend  storage.Backend
 	store    *api.Store
 	hub      *api.Hub
+	aiClient *api.AIClient
 	baseHost string
 	mux      *http.ServeMux
 }
@@ -39,6 +41,7 @@ func New(config Config) *App {
 	app := &App{
 		config:   config,
 		hub:      api.NewHub(),
+		aiClient: api.NewAIClient(config.AI),
 		baseHost: strings.TrimPrefix(strings.ToLower(config.BaseHost), "."),
 		mux:      http.NewServeMux(),
 	}
@@ -425,10 +428,10 @@ func (a *App) handleAI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	client := api.NewAIClientFromEnv()
+	client := a.aiClient
 	if !client.Configured() {
 		writeJSON(w, api.AIResponse{
-			Text:       "AI is not configured. Set OPENAI_API_KEY on the Flink server to enable this endpoint.",
+			Text:       "AI is not configured. Set ai.apiKey in the Flink server config to enable this endpoint.",
 			Configured: false,
 		}, nil)
 		return

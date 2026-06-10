@@ -36,6 +36,11 @@ addr: :8080
 dataDir: ./data
 storage: file
 baseHost: ""
+ai:
+  apiKey: ""
+  baseURL: https://api.openai.com/v1
+  model: gpt-4.1-mini
+bootstrapTenants: []
 ```
 
 You can also use Make during development:
@@ -47,16 +52,17 @@ make run
 Open `http://localhost:8080/_flink`, register a tenant, then approve it from the server binary:
 
 ```sh
-go run ./server tenants pending
-go run ./server tenants approve <tenant>
+go run ./server tenants pending --config flink.yaml
+go run ./server tenants approve <tenant> --config flink.yaml
 ```
 
 After approval, sign in on the web, create a site, save `index.html`, then open `http://localhost:8080/t/<tenant>/s/<site>/`.
 
-Pick the server storage backend with `STORAGE`:
+Pick the server storage backend by editing `flink.yaml`:
 
-```sh
-make run STORAGE=bbolt
+```yaml
+dataDir: ./data
+storage: bbolt
 ```
 
 On a VPS, install or update the systemd service with the curlable installer:
@@ -70,7 +76,6 @@ The installer writes:
 ```text
 /opt/flink/flink-server       server binary
 /etc/flink/flink.yaml         server config, created only if missing
-/etc/flink/flink.env          optional environment/secrets file
 /var/lib/flink                default data directory
 /etc/systemd/system/flink.service
 ```
@@ -82,6 +87,11 @@ addr: :8080
 dataDir: /var/lib/flink
 storage: bbolt
 baseHost: ""
+ai:
+  apiKey: ""
+  baseURL: https://api.openai.com/v1
+  model: gpt-4.1-mini
+bootstrapTenants: []
 ```
 
 Run the same command again to update the binary and restart the service. For unreleased builds or private artifacts, pass an explicit binary or tarball URL:
@@ -96,10 +106,7 @@ Useful installer env vars:
 FLINK_DOWNLOAD_URL  exact binary, .gz, or .tar.gz URL to install
 FLINK_VERSION       GitHub release tag, defaults to latest
 FLINK_REPO          GitHub repo for releases, defaults to csweichel/flink
-FLINK_ADDR          listen address written by initial config, defaults to :8080
-FLINK_DATA_DIR      data directory written by initial config, defaults to /var/lib/flink
-FLINK_STORAGE       storage driver written by initial config, defaults to bbolt
-FLINK_BASE_HOST     optional wildcard host suffix written by initial config
+FLINK_INSTALL_DATA_DIR  data directory written by initial config, defaults to /var/lib/flink
 ```
 
 Ona can run the same server with:
@@ -115,7 +122,7 @@ username: demo
 password: flink
 ```
 
-The service readiness check fetches `/flink.js` and calls `/api/sites` with those credentials, so a ready service is also ready to sign in and use. Override the demo credentials with `FLINK_DEMO_TENANT` and `FLINK_DEMO_PASSWORD` in the automation environment.
+The service writes those credentials into `.flink/ona.yaml`. Its readiness check fetches `/flink.js` and calls `/api/sites` with the same credentials, so a ready service is also ready to sign in and use.
 
 ## Tenants And Auth
 
@@ -137,16 +144,25 @@ flink-server tenants deny alice
 flink-server tenants list
 ```
 
-For local demos and automation, bootstrap an approved tenant directly:
+Tenant operator commands read storage settings from the same YAML config:
 
 ```sh
-flink-server tenants bootstrap demo flink
+flink-server tenants pending --config /etc/flink/flink.yaml
+flink-server tenants approve alice --config /etc/flink/flink.yaml
 ```
 
-Use the same `--data` and `--storage` flags on tenant commands when the server is not using defaults:
+For local demos and automation, either add an approved bootstrap tenant to the config:
+
+```yaml
+bootstrapTenants:
+  - username: demo
+    password: flink
+```
+
+or create one directly against the configured storage:
 
 ```sh
-flink-server tenants pending --data /opt/flink/data --storage bbolt
+flink-server tenants bootstrap demo flink --config flink.yaml
 ```
 
 The web app uses a tenant session cookie. The user CLI uses HTTP Basic Auth with the tenant username and password.
@@ -166,6 +182,11 @@ addr: :8080
 dataDir: ./data
 storage: file
 baseHost: ""
+ai:
+  apiKey: ""
+  baseURL: https://api.openai.com/v1
+  model: gpt-4.1-mini
+bootstrapTenants: []
 ```
 
 Run with the config:
@@ -174,7 +195,7 @@ Run with the config:
 go run ./server --config flink.yaml
 ```
 
-The server loads defaults, then YAML config, then `FLINK_*` env vars, then explicit flags. If `flink.yaml` exists in the working directory, it is loaded automatically. Tenant operator commands accept the same config:
+The server loads defaults and then the YAML config. It does not read server runtime settings from environment variables, and `--config` is the only server flag outside `init`. If `flink.yaml` exists in the working directory, it is loaded automatically. Tenant operator commands accept the same config:
 
 ```sh
 go run ./server tenants pending --config flink.yaml
@@ -204,17 +225,17 @@ The server uses one storage abstraction for its own Flink state and for user-fac
 Supported drivers:
 
 ```text
-file    default, directory-backed storage under FLINK_DATA
-bbolt   single-file embedded database at FLINK_DATA/flink.db
+file    default, directory-backed storage under dataDir
+bbolt   single-file embedded database at dataDir/flink.db
 ```
 
 The adapter boundary is in `server/storage`. DynamoDB and Firebase can be added by implementing the same `storage.Backend` interface, without changing `server/api` or the browser API.
 
-Configure storage with either flag/env form:
+Configure storage in `flink.yaml`:
 
-```sh
-flink-server --storage bbolt --data /opt/flink/data
-FLINK_STORAGE=bbolt FLINK_DATA=/opt/flink/data flink-server
+```yaml
+dataDir: /opt/flink/data
+storage: bbolt
 ```
 
 ## Browser API
@@ -268,18 +289,13 @@ realtime  WebSocket room messaging
 ai        optional server-side LLM endpoint
 ```
 
-If `OPENAI_API_KEY` is unset, `flink.ai()` returns a stable "not configured" response. To enable real calls:
+If `ai.apiKey` is empty, `flink.ai()` returns a stable "not configured" response. To enable real calls, edit `flink.yaml`:
 
-```sh
-OPENAI_API_KEY=sk-... OPENAI_MODEL=gpt-4.1-mini make run
-```
-
-Optional AI env vars:
-
-```text
-OPENAI_API_KEY    enables /ai
-OPENAI_MODEL      defaults to gpt-4.1-mini
-OPENAI_BASE_URL   defaults to https://api.openai.com/v1
+```yaml
+ai:
+  apiKey: sk-...
+  baseURL: https://api.openai.com/v1
+  model: gpt-4.1-mini
 ```
 
 ## CLI
@@ -292,7 +308,7 @@ go run ./cli --server http://localhost:8080 --tenant alice --password secret sit
 
 The CLI is for Flink users and only talks to the server API. It does not import or manage server internals. Use `FLINK_SERVER`, `FLINK_TENANT`, and `FLINK_PASSWORD` to avoid repeating flags.
 
-Server operators run `flink-server` directly or via `make run`. Use `FLINK_CONFIG`, `FLINK_DATA`, `FLINK_STORAGE`, `FLINK_ADDR`, and `FLINK_BASE_HOST` or the matching server flags to configure hosting.
+Server operators run `flink-server --config flink.yaml` directly or use `make run`, which creates `.flink/dev.yaml` on first run. Edit the YAML file to configure hosting.
 
 ## Deploy
 
@@ -306,8 +322,9 @@ scp bin/flink-server vm:/opt/flink/flink-server
 Run it behind Caddy or nginx:
 
 ```sh
-/opt/flink/flink-server init --config /opt/flink/flink.yaml --data /opt/flink/data --storage bbolt --base-host flink.internal
-OPENAI_API_KEY=sk-... /opt/flink/flink-server --config /opt/flink/flink.yaml
+/opt/flink/flink-server init --config /opt/flink/flink.yaml
+$EDITOR /opt/flink/flink.yaml
+/opt/flink/flink-server --config /opt/flink/flink.yaml
 ```
 
 Caddy example:

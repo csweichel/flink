@@ -18,10 +18,17 @@ import (
 )
 
 type serverConfig struct {
-	Addr          string `yaml:"addr"`
-	DataDir       string `yaml:"dataDir"`
-	StorageDriver string `yaml:"storage"`
-	BaseHost      string `yaml:"baseHost"`
+	Addr             string                  `yaml:"addr"`
+	DataDir          string                  `yaml:"dataDir"`
+	StorageDriver    string                  `yaml:"storage"`
+	BaseHost         string                  `yaml:"baseHost"`
+	AI               api.AIConfig            `yaml:"ai"`
+	BootstrapTenants []bootstrapTenantConfig `yaml:"bootstrapTenants"`
+}
+
+type bootstrapTenantConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 func main() {
@@ -43,31 +50,23 @@ func main() {
 }
 
 func runServe(args []string) error {
-	cfg := defaultServerConfig()
-	var configPath string
-	var addrFlag string
-	var dataFlag string
-	var storageFlag string
-	var baseHostFlag string
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	fs.StringVar(&configPath, "config", env("FLINK_CONFIG", ""), "optional YAML config file")
-	fs.StringVar(&addrFlag, "addr", "", "listen address")
-	fs.StringVar(&dataFlag, "data", "", "data directory")
-	fs.StringVar(&storageFlag, "storage", "", "storage driver: file, bbolt, dynamodb, firebase")
-	fs.StringVar(&baseHostFlag, "base-host", "", "optional wildcard host suffix, e.g. quick.internal")
-	if err := fs.Parse(args); err != nil {
+	configPath, err := parseConfigFlag("serve", args)
+	if err != nil {
 		return err
 	}
-	if err := applyConfigFile(&cfg, configPath); err != nil {
+	cfg, err := loadServerConfig(configPath)
+	if err != nil {
 		return err
 	}
-	applyEnv(&cfg)
-	applyOverrides(&cfg, addrFlag, dataFlag, storageFlag, baseHostFlag)
+	if err := bootstrapConfiguredTenants(cfg); err != nil {
+		return err
+	}
 
 	app := serverapp.New(serverapp.Config{
 		DataDir:       cfg.DataDir,
 		StorageDriver: cfg.StorageDriver,
 		BaseHost:      cfg.BaseHost,
+		AI:            cfg.AI,
 	})
 	if err := app.Init(); err != nil {
 		return err
@@ -76,6 +75,19 @@ func runServe(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	return serverapp.ListenAndServe(ctx, cfg.Addr, app)
+}
+
+func parseConfigFlag(name string, args []string) (string, error) {
+	var configPath string
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	fs.StringVar(&configPath, "config", "", "YAML config file")
+	if err := fs.Parse(args); err != nil {
+		return "", err
+	}
+	if fs.NArg() != 0 {
+		return "", fmt.Errorf("%s accepts only --config; put server settings in the YAML config file", name)
+	}
+	return configPath, nil
 }
 
 func runTenants(args []string) error {
@@ -148,13 +160,12 @@ func runInit(args []string) error {
 	force := false
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", configPath, "config file to write")
-	fs.StringVar(&cfg.Addr, "addr", cfg.Addr, "listen address")
-	fs.StringVar(&cfg.DataDir, "data", cfg.DataDir, "data directory")
-	fs.StringVar(&cfg.StorageDriver, "storage", cfg.StorageDriver, "storage driver")
-	fs.StringVar(&cfg.BaseHost, "base-host", cfg.BaseHost, "optional wildcard host suffix")
 	fs.BoolVar(&force, "force", false, "overwrite an existing config file")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("init accepts only --config and --force; edit server settings in the YAML config file")
 	}
 	if !force {
 		if _, err := os.Stat(configPath); err == nil {
@@ -176,10 +187,7 @@ func runInit(args []string) error {
 }
 
 func parseTenantCommandArgs(args []string) ([]string, serverConfig, error) {
-	cfg := defaultServerConfig()
 	var configPath string
-	var dataFlag string
-	var storageFlag string
 	var positional []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -187,36 +195,21 @@ func parseTenantCommandArgs(args []string) ([]string, serverConfig, error) {
 		case arg == "--config":
 			i++
 			if i >= len(args) {
-				return nil, cfg, fmt.Errorf("--config requires a value")
+				return nil, serverConfig{}, fmt.Errorf("--config requires a value")
 			}
 			configPath = args[i]
 		case strings.HasPrefix(arg, "--config="):
 			configPath = strings.TrimPrefix(arg, "--config=")
-		case arg == "--data":
-			i++
-			if i >= len(args) {
-				return nil, cfg, fmt.Errorf("--data requires a value")
-			}
-			dataFlag = args[i]
-		case strings.HasPrefix(arg, "--data="):
-			dataFlag = strings.TrimPrefix(arg, "--data=")
-		case arg == "--storage":
-			i++
-			if i >= len(args) {
-				return nil, cfg, fmt.Errorf("--storage requires a value")
-			}
-			storageFlag = args[i]
-		case strings.HasPrefix(arg, "--storage="):
-			storageFlag = strings.TrimPrefix(arg, "--storage=")
+		case strings.HasPrefix(arg, "--"):
+			return nil, serverConfig{}, fmt.Errorf("unknown flag %s; put server settings in the YAML config file", arg)
 		default:
 			positional = append(positional, arg)
 		}
 	}
-	if err := applyConfigFile(&cfg, configPath); err != nil {
+	cfg, err := loadServerConfig(configPath)
+	if err != nil {
 		return nil, cfg, err
 	}
-	applyEnv(&cfg)
-	applyOverrides(&cfg, "", dataFlag, storageFlag, "")
 	return positional, cfg, nil
 }
 
@@ -226,7 +219,19 @@ func defaultServerConfig() serverConfig {
 		DataDir:       "./data",
 		StorageDriver: "file",
 		BaseHost:      "",
+		AI: api.AIConfig{
+			BaseURL: "https://api.openai.com/v1",
+			Model:   "gpt-4.1-mini",
+		},
 	}
+}
+
+func loadServerConfig(configPath string) (serverConfig, error) {
+	cfg := defaultServerConfig()
+	if err := applyConfigFile(&cfg, configPath); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
 }
 
 func applyConfigFile(cfg *serverConfig, configPath string) error {
@@ -262,29 +267,41 @@ func applyConfigValues(cfg *serverConfig, override serverConfig) {
 	if override.BaseHost != "" {
 		cfg.BaseHost = override.BaseHost
 	}
-}
-
-func applyEnv(cfg *serverConfig) {
-	applyConfigValues(cfg, serverConfig{
-		Addr:          os.Getenv("FLINK_ADDR"),
-		DataDir:       os.Getenv("FLINK_DATA"),
-		StorageDriver: os.Getenv("FLINK_STORAGE"),
-		BaseHost:      os.Getenv("FLINK_BASE_HOST"),
-	})
-}
-
-func applyOverrides(cfg *serverConfig, addr, dataDir, storageDriver, baseHost string) {
-	applyConfigValues(cfg, serverConfig{
-		Addr:          addr,
-		DataDir:       dataDir,
-		StorageDriver: storageDriver,
-		BaseHost:      baseHost,
-	})
-}
-
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	if override.AI.APIKey != "" {
+		cfg.AI.APIKey = override.AI.APIKey
 	}
-	return fallback
+	if override.AI.BaseURL != "" {
+		cfg.AI.BaseURL = override.AI.BaseURL
+	}
+	if override.AI.Model != "" {
+		cfg.AI.Model = override.AI.Model
+	}
+	if override.BootstrapTenants != nil {
+		cfg.BootstrapTenants = override.BootstrapTenants
+	}
+}
+
+func bootstrapConfiguredTenants(cfg serverConfig) error {
+	if len(cfg.BootstrapTenants) == 0 {
+		return nil
+	}
+	backend, err := storage.Open(cfg.StorageDriver, cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	if err := backend.Init(context.Background()); err != nil {
+		return err
+	}
+	defer backend.Close()
+
+	store := api.NewStore(backend, "")
+	for _, tenant := range cfg.BootstrapTenants {
+		if strings.TrimSpace(tenant.Username) == "" && strings.TrimSpace(tenant.Password) == "" {
+			continue
+		}
+		if _, err := store.CreateApprovedTenant(tenant.Username, tenant.Password); err != nil {
+			return err
+		}
+	}
+	return nil
 }

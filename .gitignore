@@ -3,6 +3,7 @@
 bin/
 data/
 tmp-smoke-data/
+.flink/
 *.db
 *.db-shm
 *.db-wal

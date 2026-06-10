@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -23,6 +22,12 @@ type AIClient struct {
 	HTTPClient *http.Client
 }
 
+type AIConfig struct {
+	APIKey  string `json:"apiKey" yaml:"apiKey"`
+	BaseURL string `json:"baseURL" yaml:"baseURL"`
+	Model   string `json:"model" yaml:"model"`
+}
+
 type AIRequest struct {
 	Prompt          string `json:"prompt"`
 	Instructions    string `json:"instructions,omitempty"`
@@ -36,12 +41,19 @@ type AIResponse struct {
 	Configured bool   `json:"configured"`
 }
 
-func NewAIClientFromEnv() *AIClient {
-	baseURL := strings.TrimRight(env("OPENAI_BASE_URL", defaultOpenAIBaseURL), "/")
+func NewAIClient(config AIConfig) *AIClient {
+	baseURL := strings.TrimRight(config.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = defaultOpenAIBaseURL
+	}
+	model := strings.TrimSpace(config.Model)
+	if model == "" {
+		model = defaultOpenAIModel
+	}
 	return &AIClient{
-		APIKey:  os.Getenv("OPENAI_API_KEY"),
+		APIKey:  config.APIKey,
 		BaseURL: baseURL,
-		Model:   env("OPENAI_MODEL", defaultOpenAIModel),
+		Model:   model,
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -144,11 +156,4 @@ func (r openAIResponse) collectText() string {
 		}
 	}
 	return strings.Join(parts, "\n")
-}
-
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

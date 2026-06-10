@@ -1,17 +1,13 @@
 #!/bin/sh
 set -eu
 
-SERVICE_NAME="${FLINK_SERVICE_NAME:-flink}"
+SERVICE_NAME="${FLINK_INSTALL_SERVICE_NAME:-flink}"
 INSTALL_DIR="${FLINK_INSTALL_DIR:-/opt/flink}"
-CONFIG_DIR="${FLINK_CONFIG_DIR:-/etc/flink}"
-DATA_DIR="${FLINK_DATA_DIR:-/var/lib/flink}"
-CONFIG_FILE="${FLINK_CONFIG:-$CONFIG_DIR/flink.yaml}"
-ENV_FILE="${FLINK_ENV_FILE:-$CONFIG_DIR/flink.env}"
-USER_NAME="${FLINK_USER:-flink}"
-GROUP_NAME="${FLINK_GROUP:-flink}"
-ADDR="${FLINK_ADDR:-:8080}"
-STORAGE="${FLINK_STORAGE:-bbolt}"
-BASE_HOST="${FLINK_BASE_HOST:-}"
+CONFIG_DIR="${FLINK_INSTALL_CONFIG_DIR:-/etc/flink}"
+DATA_DIR="${FLINK_INSTALL_DATA_DIR:-/var/lib/flink}"
+CONFIG_FILE="${FLINK_INSTALL_CONFIG_FILE:-$CONFIG_DIR/flink.yaml}"
+USER_NAME="${FLINK_INSTALL_USER:-flink}"
+GROUP_NAME="${FLINK_INSTALL_GROUP:-flink}"
 REPO="${FLINK_REPO:-csweichel/flink}"
 VERSION="${FLINK_VERSION:-latest}"
 DOWNLOAD_URL="${FLINK_DOWNLOAD_URL:-}"
@@ -105,28 +101,22 @@ install_config() {
   as_root chown "$USER_NAME:$GROUP_NAME" "$DATA_DIR"
 
   if [ ! -f "$CONFIG_FILE" ]; then
-    init_args="init --config $CONFIG_FILE --addr $ADDR --data $DATA_DIR --storage $STORAGE"
-    if [ -n "$BASE_HOST" ]; then
-      init_args="$init_args --base-host $BASE_HOST"
-    fi
-    as_root "$INSTALL_DIR/flink-server" $init_args
+    as_root sh -c "cat > '$CONFIG_FILE'" <<EOF
+# Flink server configuration
+addr: :8080
+dataDir: $DATA_DIR
+storage: bbolt
+baseHost: ""
+ai:
+  apiKey: ""
+  baseURL: https://api.openai.com/v1
+  model: gpt-4.1-mini
+bootstrapTenants: []
+EOF
     as_root chown root:"$GROUP_NAME" "$CONFIG_FILE"
     as_root chmod 0640 "$CONFIG_FILE"
   else
     echo "keeping existing config $CONFIG_FILE"
-  fi
-
-  if [ ! -f "$ENV_FILE" ]; then
-    as_root sh -c "cat > '$ENV_FILE'" <<'EOF'
-# Optional environment for flink.service.
-# OPENAI_API_KEY=
-# OPENAI_MODEL=gpt-4.1-mini
-# OPENAI_BASE_URL=https://api.openai.com/v1
-EOF
-    as_root chown root:"$GROUP_NAME" "$ENV_FILE"
-    as_root chmod 0640 "$ENV_FILE"
-  else
-    echo "keeping existing env file $ENV_FILE"
   fi
 }
 
@@ -143,7 +133,6 @@ Type=simple
 User=$USER_NAME
 Group=$GROUP_NAME
 WorkingDirectory=$INSTALL_DIR
-EnvironmentFile=-$ENV_FILE
 ExecStart=$INSTALL_DIR/flink-server --config $CONFIG_FILE
 Restart=on-failure
 RestartSec=3
@@ -160,8 +149,8 @@ EOF
 start_service() {
   as_root systemctl daemon-reload
   as_root systemctl enable "$SERVICE_NAME.service" >/dev/null
-  if [ "${FLINK_SKIP_START:-}" = "1" ]; then
-    echo "installed $SERVICE_NAME.service; start skipped because FLINK_SKIP_START=1"
+  if [ "${FLINK_INSTALL_SKIP_START:-}" = "1" ]; then
+    echo "installed $SERVICE_NAME.service; start skipped because FLINK_INSTALL_SKIP_START=1"
     return
   fi
   as_root systemctl restart "$SERVICE_NAME.service"

@@ -9,7 +9,6 @@ Type=simple
 User=flink
 Group=flink
 WorkingDirectory=/opt/flink
-EnvironmentFile=-/etc/flink/flink.env
 ExecStart=/opt/flink/flink-server --config /etc/flink/flink.yaml
 Restart=on-failure
 RestartSec=3

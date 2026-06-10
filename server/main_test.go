@@ -15,7 +15,7 @@ func TestRunInitWritesDefaultYAMLConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "flink.yaml")
 
-	if err := runInit([]string{"--config", path, "--addr", ":9090", "--data", "/var/lib/flink", "--storage", "bbolt", "--base-host", "flink.internal"}); err != nil {
+	if err := runInit([]string{"--config", path}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -25,10 +25,11 @@ func TestRunInitWritesDefaultYAMLConfig(t *testing.T) {
 	}
 	got := string(b)
 	for _, want := range []string{
-		"addr: :9090",
-		"dataDir: /var/lib/flink",
-		"storage: bbolt",
-		"baseHost: flink.internal",
+		"addr: :8080",
+		"dataDir: ./data",
+		"storage: file",
+		"baseURL: https://api.openai.com/v1",
+		"model: gpt-4.1-mini",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("config missing %q:\n%s", want, got)
@@ -40,34 +41,48 @@ func TestRunInitWritesDefaultYAMLConfig(t *testing.T) {
 	}
 }
 
-func TestApplyConfigFileEnvAndFlagsPrecedence(t *testing.T) {
+func TestLoadServerConfigUsesYAMLOnly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "flink.yaml")
-	if err := os.WriteFile(path, []byte("addr: :9000\ndataDir: /from-file\nstorage: bbolt\nbaseHost: file.internal\n"), 0644); err != nil {
+	config := `addr: :9000
+dataDir: /from-file
+storage: bbolt
+baseHost: file.internal
+ai:
+  apiKey: test-key
+  baseURL: http://ai.local/v1
+  model: test-model
+bootstrapTenants:
+  - username: demo
+    password: secret
+`
+	if err := os.WriteFile(path, []byte(config), 0644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("FLINK_DATA", "/from-env")
-
-	cfg := defaultServerConfig()
-	if err := applyConfigFile(&cfg, path); err != nil {
+	cfg, err := loadServerConfig(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	applyEnv(&cfg)
-	applyOverrides(&cfg, ":9999", "/from-flag", "", "flag.internal")
 
-	if cfg.Addr != ":9999" || cfg.DataDir != "/from-flag" || cfg.StorageDriver != "bbolt" || cfg.BaseHost != "flag.internal" {
+	if cfg.Addr != ":9000" || cfg.DataDir != "/from-file" || cfg.StorageDriver != "bbolt" || cfg.BaseHost != "file.internal" {
 		t.Fatalf("unexpected config: %#v", cfg)
+	}
+	if cfg.AI.APIKey != "test-key" || cfg.AI.BaseURL != "http://ai.local/v1" || cfg.AI.Model != "test-model" {
+		t.Fatalf("unexpected AI config: %#v", cfg.AI)
+	}
+	if len(cfg.BootstrapTenants) != 1 || cfg.BootstrapTenants[0].Username != "demo" || cfg.BootstrapTenants[0].Password != "secret" {
+		t.Fatalf("unexpected bootstrap tenants: %#v", cfg.BootstrapTenants)
 	}
 }
 
-func TestParseTenantCommandArgsUsesConfigAndFlagOverrides(t *testing.T) {
+func TestParseTenantCommandArgsUsesConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "flink.yaml")
-	if err := os.WriteFile(path, []byte("addr: :9000\ndataDir: /from-file\nstorage: file\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("addr: :9000\ndataDir: /from-file\nstorage: bbolt\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	args, cfg, err := parseTenantCommandArgs([]string{"approve", "alice", "--config", path, "--storage", "bbolt"})
+	args, cfg, err := parseTenantCommandArgs([]string{"approve", "alice", "--config", path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,16 +92,24 @@ func TestParseTenantCommandArgsUsesConfigAndFlagOverrides(t *testing.T) {
 	if cfg.DataDir != "/from-file" || cfg.StorageDriver != "bbolt" {
 		t.Fatalf("unexpected config: %#v", cfg)
 	}
+	if _, _, err := parseTenantCommandArgs([]string{"approve", "alice", "--storage", "file", "--config", path}); err == nil {
+		t.Fatal("expected server setting flag to be rejected")
+	}
 }
 
 func TestRunTenantsBootstrapCreatesApprovedTenant(t *testing.T) {
 	dir := t.TempDir()
-
-	if err := runTenants([]string{"bootstrap", "demo", "secret", "--data", dir, "--storage", "file"}); err != nil {
+	configPath := filepath.Join(dir, "flink.yaml")
+	dataDir := filepath.Join(dir, "data")
+	if err := os.WriteFile(configPath, []byte("addr: :8080\ndataDir: "+dataDir+"\nstorage: file\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	backend, err := storage.Open("file", dir)
+	if err := runTenants([]string{"bootstrap", "demo", "secret", "--config", configPath}); err != nil {
+		t.Fatal(err)
+	}
+
+	backend, err := storage.Open("file", dataDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,5 +125,30 @@ func TestRunTenantsBootstrapCreatesApprovedTenant(t *testing.T) {
 	}
 	if tenant.Username != "demo" || tenant.Status != api.TenantApproved {
 		t.Fatalf("unexpected tenant: %#v", tenant)
+	}
+}
+
+func TestBootstrapConfiguredTenantsCreatesApprovedTenants(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultServerConfig()
+	cfg.DataDir = dir
+	cfg.BootstrapTenants = []bootstrapTenantConfig{{Username: "demo", Password: "secret"}}
+
+	if err := bootstrapConfiguredTenants(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	backend, err := storage.Open("file", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Close()
+
+	store := api.NewStore(backend, "")
+	if _, err := store.AuthenticateTenant("demo", "secret"); err != nil {
+		t.Fatal(err)
 	}
 }
