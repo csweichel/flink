@@ -1,5 +1,65 @@
-export const examples: Record<string, string> = {
-  upload: `<!doctype html>
+package cmd
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"sort"
+	"strings"
+
+	"github.com/spf13/cobra"
+)
+
+func siteExampleCommand(serverURL, username, password *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "example [slug] [name]",
+		Short: "List or publish a built-in example site",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 || len(args) == 2 {
+				return nil
+			}
+			return fmt.Errorf("expected no arguments to list examples, or <slug> <name> to publish one")
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				names := make([]string, 0, len(exampleSites))
+				for name := range exampleSites {
+					names = append(names, name)
+				}
+				sort.Strings(names)
+				for _, name := range names {
+					fmt.Fprintln(cmd.OutOrStdout(), name)
+				}
+				return nil
+			}
+
+			slug := args[0]
+			name := strings.ToLower(strings.TrimSpace(args[1]))
+			content, ok := exampleSites[name]
+			if !ok {
+				return fmt.Errorf("unknown example %q", args[1])
+			}
+			c, err := newClient(*serverURL, *username, *password)
+			if err != nil {
+				return err
+			}
+			var meta siteMeta
+			if err := c.doJSON(http.MethodPost, "/api/sites", map[string]string{"slug": slug}, &meta); err != nil {
+				return err
+			}
+			path := fmt.Sprintf("/api/sites/%s/files?path=%s", url.PathEscape(slug), url.QueryEscape("index.html"))
+			var out map[string]string
+			if err := c.doBytes(http.MethodPut, path, []byte(content), "text/html; charset=utf-8", &out); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "published %s example to %s\n", name, c.siteURL(slug))
+			return nil
+		},
+	}
+}
+
+var exampleSites = map[string]string{
+	"upload": `<!doctype html>
 <html>
 <head><meta name="viewport" content="width=device-width, initial-scale=1"><script src="/flink.js"></script></head>
 <body>
@@ -21,7 +81,7 @@ export const examples: Record<string, string> = {
   </script>
 </body>
 </html>`,
-  data: `<!doctype html>
+	"data": `<!doctype html>
 <html>
 <head><meta name="viewport" content="width=device-width, initial-scale=1"><script src="/flink.js"></script></head>
 <body>
@@ -43,7 +103,7 @@ export const examples: Record<string, string> = {
   </script>
 </body>
 </html>`,
-  chat: `<!doctype html>
+	"chat": `<!doctype html>
 <html>
 <head><meta name="viewport" content="width=device-width, initial-scale=1"><script src="/flink.js"></script></head>
 <body>
@@ -63,7 +123,7 @@ export const examples: Record<string, string> = {
   </script>
 </body>
 </html>`,
-  library: `<!doctype html>
+	"library": `<!doctype html>
 <html>
 <head><meta name="viewport" content="width=device-width, initial-scale=1"><script src="/flink.js"></script></head>
 <body>
@@ -78,5 +138,5 @@ export const examples: Record<string, string> = {
     };
   </script>
 </body>
-</html>`
-};
+</html>`,
+}

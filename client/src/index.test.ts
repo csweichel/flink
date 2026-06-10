@@ -37,10 +37,17 @@ test("uploads post multipart data and expose upload helpers", async () => {
   const calls: FetchCall[] = [];
   const fetchMock = async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ url: String(input), init });
-    if (String(input).endsWith("/uploads")) {
+    if (String(input).endsWith("/uploads") && !init?.method) {
+      return jsonResponse([{ url: "/uploads/alice/demo/stored.txt", name: "stored.txt", size: 5 }]);
+    }
+    if (String(input).endsWith("/uploads") && init?.method === "POST") {
       assert.equal(init?.method, "POST");
       assert.ok(init?.body instanceof FormData);
-      return jsonResponse({ url: "/uploads/alice/demo/file.txt", name: "file.txt" });
+      return jsonResponse({ url: "/uploads/alice/demo/stored.txt", name: "file.txt" });
+    }
+    if (String(input).includes("/uploads?name=stored.txt")) {
+      assert.equal(init?.method, "DELETE");
+      return jsonResponse({ deleted: true });
     }
     return new Response("uploaded text");
   };
@@ -51,13 +58,19 @@ test("uploads post multipart data and expose upload helpers", async () => {
     fetch: fetchMock as typeof fetch,
   });
 
+  const listed = await flink.uploads.list();
   const uploaded = await flink.upload(new Blob(["hello"], { type: "text/plain" }), { filename: "file.txt" });
   const text = await flink.uploads.text(uploaded);
+  const deleted = await flink.deleteUpload(uploaded);
 
-  assert.deepEqual(uploaded, { url: "/uploads/alice/demo/file.txt", name: "file.txt" });
+  assert.deepEqual(listed, [{ url: "/uploads/alice/demo/stored.txt", name: "stored.txt", size: 5 }]);
+  assert.deepEqual(uploaded, { url: "/uploads/alice/demo/stored.txt", name: "file.txt" });
   assert.equal(text, "uploaded text");
+  assert.deepEqual(deleted, { deleted: true });
   assert.equal(calls[0].url, "https://flink.internal/api/public/demo/uploads");
-  assert.equal(calls[1].url, "https://flink.internal/uploads/alice/demo/file.txt");
+  assert.equal(calls[1].url, "https://flink.internal/api/public/demo/uploads");
+  assert.equal(calls[2].url, "https://flink.internal/uploads/alice/demo/stored.txt");
+  assert.equal(calls[3].url, "https://flink.internal/api/public/demo/uploads?name=stored.txt");
 });
 
 test("file APIs list, write, and delete site files", async () => {

@@ -17,6 +17,12 @@ export interface UploadResult {
   name: string;
 }
 
+export interface UploadInfo {
+  url: string;
+  name: string;
+  size: number;
+}
+
 export interface UploadOptions {
   filename?: string;
   fieldName?: string;
@@ -84,12 +90,15 @@ export interface FlinkFilesAPI {
 }
 
 export interface FlinkUploadsAPI {
+  list(): Promise<UploadInfo[]>;
   upload(file: Blob, options?: UploadOptions): Promise<UploadResult>;
-  url(upload: UploadResult | string): string;
-  fetch(upload: UploadResult | string, init?: RequestInit): Promise<Response>;
-  text(upload: UploadResult | string): Promise<string>;
-  json<T = JsonValue>(upload: UploadResult | string): Promise<T>;
-  blob(upload: UploadResult | string): Promise<Blob>;
+  delete(upload: UploadInfo | UploadResult | string): Promise<{ deleted: true }>;
+  del(upload: UploadInfo | UploadResult | string): Promise<{ deleted: true }>;
+  url(upload: UploadInfo | UploadResult | string): string;
+  fetch(upload: UploadInfo | UploadResult | string, init?: RequestInit): Promise<Response>;
+  text(upload: UploadInfo | UploadResult | string): Promise<string>;
+  json<T = JsonValue>(upload: UploadInfo | UploadResult | string): Promise<T>;
+  blob(upload: UploadInfo | UploadResult | string): Promise<Blob>;
 }
 
 export interface FlinkRealtimeAPI {
@@ -112,6 +121,7 @@ export interface FlinkClient {
   delete(key: string): Promise<{ deleted: true }>;
   del(key: string): Promise<{ deleted: true }>;
   upload(file: Blob, options?: UploadOptions): Promise<UploadResult>;
+  deleteUpload(upload: UploadInfo | UploadResult | string): Promise<{ deleted: true }>;
   room<TSend = unknown, TReceive = unknown>(
     name?: string,
     onMessage?: MessageHandler<TReceive>,
@@ -208,6 +218,9 @@ export function createFlinkClient(options: FlinkClientOptions = {}): FlinkClient
   };
 
   const uploads: FlinkUploadsAPI = {
+    list() {
+      return request<UploadInfo[]>("/uploads");
+    },
     upload(file: Blob, uploadOptions: UploadOptions = {}) {
       const form = new FormData();
       const fieldName = uploadOptions.fieldName ?? "file";
@@ -222,20 +235,26 @@ export function createFlinkClient(options: FlinkClientOptions = {}): FlinkClient
         body: form,
       });
     },
-    url(upload: UploadResult | string) {
+    delete(upload: UploadInfo | UploadResult | string) {
+      return request<{ deleted: true }>(`/uploads?name=${encodeURIComponent(uploadName(upload))}`, { method: "DELETE" });
+    },
+    del(upload: UploadInfo | UploadResult | string) {
+      return uploads.delete(upload);
+    },
+    url(upload: UploadInfo | UploadResult | string) {
       const raw = typeof upload === "string" ? upload : upload.url;
       return absoluteUrl(baseUrl, raw);
     },
-    fetch(upload: UploadResult | string, init?: RequestInit) {
+    fetch(upload: UploadInfo | UploadResult | string, init?: RequestInit) {
       return fetchImpl(uploads.url(upload), { credentials, ...init });
     },
-    async text(upload: UploadResult | string) {
+    async text(upload: UploadInfo | UploadResult | string) {
       return (await uploads.fetch(upload)).text();
     },
-    async json<T = JsonValue>(upload: UploadResult | string) {
+    async json<T = JsonValue>(upload: UploadInfo | UploadResult | string) {
       return (await uploads.fetch(upload)).json() as Promise<T>;
     },
-    async blob(upload: UploadResult | string) {
+    async blob(upload: UploadInfo | UploadResult | string) {
       return (await uploads.fetch(upload)).blob();
     },
   };
@@ -286,6 +305,7 @@ export function createFlinkClient(options: FlinkClientOptions = {}): FlinkClient
     delete: storage.delete,
     del: storage.del,
     upload: uploads.upload,
+    deleteUpload: uploads.delete,
     room: realtime.room,
     ai(prompt: string | AIRequest) {
       const body = typeof prompt === "string" ? { prompt } : prompt;
@@ -367,6 +387,17 @@ function trimTrailingSlash(value: string): string {
 
 function fileName(file: Blob): string | undefined {
   return "name" in file && typeof file.name === "string" ? file.name : undefined;
+}
+
+function uploadName(upload: UploadInfo | UploadResult | string): string {
+  if (typeof upload !== "string" && "size" in upload) {
+    return upload.name;
+  }
+  if (typeof upload !== "string") {
+    return uploadName(upload.url);
+  }
+  const clean = upload.split("?")[0].replace(/\/+$/, "");
+  return clean.includes("/") ? clean.slice(clean.lastIndexOf("/") + 1) : clean;
 }
 
 function parseMessage(value: unknown): unknown {

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -84,6 +85,7 @@ func (a *App) routes() {
 	a.mux.HandleFunc("/api/sites", a.requireTenant(a.handleSites))
 	a.mux.HandleFunc("/api/sites/", a.requireTenant(a.handleSiteAPI))
 	a.mux.HandleFunc("/api/public/", a.requireTenant(a.handlePublicAPI))
+	a.mux.HandleFunc("/llms.txt", a.handleLLMSTXT)
 	a.mux.HandleFunc("/flink-logo.png", a.handleLogo)
 	a.mux.HandleFunc("/favicon.ico", a.handleLogo)
 	a.mux.HandleFunc("/flink.js", func(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +100,122 @@ func (a *App) routes() {
 	a.mux.HandleFunc("/uploads/", a.requireTenant(a.handleUploadFile))
 	a.mux.HandleFunc("/ws/", a.requireTenant(a.handleWS))
 	a.mux.HandleFunc("/", a.requireTenant(a.handleSite))
+}
+
+func (a *App) handleLLMSTXT(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	http.ServeContent(w, r, "llms.txt", time.Time{}, strings.NewReader(a.llmsTXT(r)))
+}
+
+func (a *App) llmsTXT(r *http.Request) string {
+	origin := requestOrigin(r)
+	cliBase := "https://github.com/csweichel/flink/releases/latest/download/"
+	if a.baseHost != "" {
+		baseHost := a.baseHost
+		return fmt.Sprintf(`# Flink
+
+This Flink server hosts tenant-scoped websites on domain-based URLs.
+
+Use this exact URL pattern for published websites:
+https://<tenant>--<site>.%s/
+
+For example, tenant demo and site my-site will be available at:
+
+https://demo--my-site.%s/
+
+Download the Flink CLI from GitHub Releases. Do not ask the user to clone the repository or build the CLI from source.
+
+- Linux amd64: %sflink_linux_amd64.tar.gz
+- Linux arm64: %sflink_linux_arm64.tar.gz
+- macOS amd64: %sflink_darwin_amd64.tar.gz
+- macOS arm64: %sflink_darwin_arm64.tar.gz
+
+Configure the CLI with this server:
+
+export FLINK_SERVER=%s
+export FLINK_TENANT=<tenant>
+export FLINK_PASSWORD=<password>
+
+Publish a built website:
+
+./flink site create my-site
+./flink site write my-site ./dist
+
+Publish a single HTML file:
+
+./flink site create my-site
+./flink site write my-site ./index.html index.html
+
+For multi-file websites, publish a directory. Paths are preserved under the same domain:
+
+- ./dist/index.html -> https://<tenant>--<site>.%s/
+- ./dist/assets/app.css -> https://<tenant>--<site>.%s/assets/app.css
+- ./dist/docs/index.html -> https://<tenant>--<site>.%s/docs/
+
+Hosted sites can use Flink backend APIs by importing:
+
+<script src="/flink.js"></script>
+
+Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend.
+`, baseHost, baseHost, cliBase, cliBase, cliBase, cliBase, origin, baseHost, baseHost, baseHost)
+	}
+	return fmt.Sprintf(`# Flink
+
+This Flink server does not have domain-based hosting configured, so use path-based tenant URLs.
+
+Use this exact URL pattern for published websites:
+%s/t/<tenant>/s/<site>/
+
+Download the Flink CLI from GitHub Releases. Do not ask the user to clone the repository or build the CLI from source.
+
+- Linux amd64: %sflink_linux_amd64.tar.gz
+- Linux arm64: %sflink_linux_arm64.tar.gz
+- macOS amd64: %sflink_darwin_amd64.tar.gz
+- macOS arm64: %sflink_darwin_arm64.tar.gz
+
+Configure the CLI with this server:
+
+export FLINK_SERVER=%s
+export FLINK_TENANT=<tenant>
+export FLINK_PASSWORD=<password>
+
+Publish a built website:
+
+./flink site create my-site
+./flink site write my-site ./dist
+
+Publish a single HTML file:
+
+./flink site create my-site
+./flink site write my-site ./index.html index.html
+
+For multi-file websites, publish a directory. Paths are preserved under the same site base:
+
+- ./dist/index.html -> %s/t/<tenant>/s/<site>/
+- ./dist/assets/app.css -> %s/t/<tenant>/s/<site>/assets/app.css
+- ./dist/docs/index.html -> %s/t/<tenant>/s/<site>/docs/
+
+Hosted sites can use Flink backend APIs by importing:
+
+<script src="/flink.js"></script>
+
+Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend.
+`, origin, cliBase, cliBase, cliBase, cliBase, origin, origin, origin, origin)
+}
+
+func requestOrigin(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	host := r.Host
+	if forwardedHost := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0]); forwardedHost != "" {
+		host = forwardedHost
+	}
+	if host == "" {
+		host = "localhost"
+	}
+	return scheme + "://" + host
 }
 
 func (a *App) handleLogo(w http.ResponseWriter, r *http.Request) {
@@ -356,6 +474,8 @@ func (a *App) dispatchAPI(w http.ResponseWriter, r *http.Request, slug, area, ta
 		a.handleData(w, r, tenant.Username, slug, tail)
 	case "uploads":
 		a.handleUpload(w, r, tenant.Username, slug)
+	case "archive":
+		a.handleArchive(w, r, tenant.Username, slug)
 	case "ai":
 		a.handleAI(w, r)
 	default:
@@ -459,22 +579,116 @@ func (a *App) handleData(w http.ResponseWriter, r *http.Request, tenant, slug, k
 }
 
 func (a *App) handleUpload(w http.ResponseWriter, r *http.Request, tenant, slug string) {
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		uploads, err := a.store.ListUploads(tenant, slug)
+		writeJSON(w, uploads, err)
+	case http.MethodPost:
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		f, header, err := r.FormFile("file")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		defer f.Close()
+		uploaded, err := a.store.SaveUpload(tenant, slug, header.Filename, f)
+		writeJSON(w, uploaded, err)
+	case http.MethodDelete:
+		name, err := api.CleanPath(r.URL.Query().Get("name"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"deleted": true}, a.store.DeleteUpload(tenant, slug, name))
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *App) handleArchive(w http.ResponseWriter, r *http.Request, tenant, slug string) {
+	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	f, header, err := r.FormFile("file")
+	b, err := a.siteArchive(tenant, slug)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer f.Close()
-	uploaded, err := a.store.SaveUpload(tenant, slug, header.Filename, f)
-	writeJSON(w, uploaded, err)
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, slug))
+	http.ServeContent(w, r, slug+".zip", time.Now(), bytes.NewReader(b))
+}
+
+func (a *App) siteArchive(tenant, slug string) ([]byte, error) {
+	meta, err := a.store.ReadMeta(tenant, slug)
+	if err != nil {
+		return nil, err
+	}
+	files, err := a.store.ListSiteFiles(tenant, slug, "")
+	if err != nil {
+		return nil, err
+	}
+	data, err := a.store.ReadData(tenant, slug)
+	if err != nil {
+		return nil, err
+	}
+	uploads, err := a.store.ListUploads(tenant, slug)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	if err := writeZipJSON(zw, "site.json", meta); err != nil {
+		return nil, err
+	}
+	if err := writeZipJSON(zw, "data.json", data); err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		b, err := a.store.ReadSiteFile(tenant, slug, file.Path)
+		if err != nil {
+			return nil, err
+		}
+		if err := writeZipFile(zw, "files/"+file.Path, b); err != nil {
+			return nil, err
+		}
+	}
+	for _, upload := range uploads {
+		b, err := a.store.ReadUpload(tenant, slug, upload.Name)
+		if err != nil {
+			return nil, err
+		}
+		if err := writeZipFile(zw, "uploads/"+upload.Name, b); err != nil {
+			return nil, err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func writeZipJSON(zw *zip.Writer, name string, value any) error {
+	b, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	return writeZipFile(zw, name, b)
+}
+
+func writeZipFile(zw *zip.Writer, name string, b []byte) error {
+	w, err := zw.Create(name)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(b)
+	return err
 }
 
 func (a *App) handleAI(w http.ResponseWriter, r *http.Request) {

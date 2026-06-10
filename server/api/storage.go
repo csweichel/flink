@@ -73,6 +73,12 @@ type Upload struct {
 	Name string `json:"name"`
 }
 
+type UploadInfo struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	Size int    `json:"size"`
+}
+
 type SiteFileInfo struct {
 	Path string `json:"path"`
 	Size int    `json:"size"`
@@ -526,6 +532,50 @@ func (s *Store) ReadUpload(tenant, slug, name string) ([]byte, error) {
 		return nil, err
 	}
 	return s.backend.Get(context.Background(), siteUploadsCollection(tenant, slug), name)
+}
+
+func (s *Store) ListUploads(tenant, slug string) ([]UploadInfo, error) {
+	if err := validateTenant(tenant); err != nil {
+		return nil, err
+	}
+	if !ValidSlug(slug) {
+		return nil, fmt.Errorf("invalid slug %q", slug)
+	}
+	entries, err := s.backend.List(context.Background(), siteUploadsCollection(tenant, slug), "")
+	if err != nil {
+		return nil, err
+	}
+	uploads := make([]UploadInfo, 0, len(entries))
+	for _, entry := range entries {
+		uploads = append(uploads, UploadInfo{
+			Name: entry.Key,
+			URL:  "/uploads/" + tenant + "/" + slug + "/" + entry.Key,
+			Size: len(entry.Value),
+		})
+	}
+	sort.Slice(uploads, func(i, j int) bool { return uploads[i].Name < uploads[j].Name })
+	return uploads, nil
+}
+
+func (s *Store) DeleteUpload(tenant, slug, name string) error {
+	if err := validateTenant(tenant); err != nil {
+		return err
+	}
+	if !ValidSlug(slug) {
+		return fmt.Errorf("invalid slug %q", slug)
+	}
+	name, err := CleanPath(name)
+	if err != nil {
+		return err
+	}
+	if err := s.backend.Delete(context.Background(), siteUploadsCollection(tenant, slug), name); err != nil {
+		return err
+	}
+	if meta, err := s.ReadMeta(tenant, slug); err == nil {
+		meta.UpdatedAt = time.Now().UTC()
+		_ = s.writeMeta(tenant, meta)
+	}
+	return nil
 }
 
 func (s *Store) setTenantStatus(username, status string) (PublicTenant, error) {

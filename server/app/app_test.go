@@ -1,6 +1,7 @@
 package app
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -328,6 +329,24 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 		t.Fatalf("client library not served: %d", res.Code)
 	}
 
+	res = rawRequest(t, a, http.MethodGet, "/llms.txt", nil, "")
+	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Fatalf("llms.txt not served publicly: status=%d content-type=%q", res.Code, res.Header().Get("Content-Type"))
+	}
+	for _, want := range []string{
+		"github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz",
+		"Do not ask the user to clone the repository or build the CLI from source",
+		"https://<tenant>--<site>.quick.internal/",
+		"https://demo--my-site.quick.internal/",
+	} {
+		if !bytes.Contains(res.Body.Bytes(), []byte(want)) {
+			t.Fatalf("llms.txt missing %q:\n%s", want, res.Body.String())
+		}
+	}
+	if bytes.Contains(res.Body.Bytes(), []byte("/t/<tenant>/s/<site>/")) || bytes.Contains(res.Body.Bytes(), []byte("/s/<site>/")) {
+		t.Fatalf("domain-configured llms.txt should not mention path-based hosting:\n%s", res.Body.String())
+	}
+
 	wantLogo, err := frontend.ReadLogoPNG()
 	if err != nil {
 		t.Fatal(err)
@@ -343,9 +362,31 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 	}
 }
 
+func TestLLMSTXTFallsBackToPathHostingWithoutBaseHost(t *testing.T) {
+	a := testAppWithConfig(t, Config{DataDir: t.TempDir()})
+	req := httptest.NewRequest(http.MethodGet, "http://flink.internal/llms.txt", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	res := httptest.NewRecorder()
+	a.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Fatalf("llms.txt not served publicly: status=%d content-type=%q", res.Code, res.Header().Get("Content-Type"))
+	}
+	for _, want := range []string{
+		"This Flink server does not have domain-based hosting configured",
+		"https://flink.internal/t/<tenant>/s/<site>/",
+		"./flink site write my-site ./dist",
+	} {
+		if !bytes.Contains(res.Body.Bytes(), []byte(want)) {
+			t.Fatalf("fallback llms.txt missing %q:\n%s", want, res.Body.String())
+		}
+	}
+}
+
 func TestUpload(t *testing.T) {
 	a := testApp(t)
 	postJSON(t, a, "/api/sites", map[string]string{"slug": "files"})
+	putJSON(t, a, "/api/public/files/data/title", "uploads")
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	fw, err := mw.CreateFormFile("file", "hello.txt")
@@ -362,9 +403,53 @@ func TestUpload(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
+	storedName := strings.TrimPrefix(out["url"], "/uploads/acme/files/")
+	if storedName == "" || storedName == out["name"] {
+		t.Fatalf("upload should expose original name and stored URL, got %#v", out)
+	}
+
+	res = request(t, a, http.MethodGet, "/api/sites/files/uploads", nil, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("upload list failed: %d %s", res.Code, res.Body.String())
+	}
+	var uploads []api.UploadInfo
+	if err := json.Unmarshal(res.Body.Bytes(), &uploads); err != nil {
+		t.Fatal(err)
+	}
+	if len(uploads) != 1 || uploads[0].Name != storedName || uploads[0].URL != out["url"] || uploads[0].Size != 5 {
+		t.Fatalf("unexpected upload list: %#v", uploads)
+	}
+
 	res = request(t, a, http.MethodGet, out["url"], nil, "")
 	if res.Code != http.StatusOK || res.Body.String() != "hello" {
 		t.Fatalf("uploaded file not served: %d %q", res.Code, res.Body.String())
+	}
+
+	res = request(t, a, http.MethodGet, "/api/sites/files/archive", nil, "")
+	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "application/zip" {
+		t.Fatalf("archive failed: %d %s", res.Code, res.Body.String())
+	}
+	archive := readZip(t, res.Body.Bytes())
+	if !bytes.Contains(archive["site.json"], []byte(`"slug": "files"`)) {
+		t.Fatalf("archive missing site metadata: %s", archive["site.json"])
+	}
+	if !bytes.Contains(archive["data.json"], []byte(`"title": "uploads"`)) {
+		t.Fatalf("archive missing state: %s", archive["data.json"])
+	}
+	if !bytes.Contains(archive["files/index.html"], []byte("<!doctype html>")) {
+		t.Fatalf("archive missing hosted file: %q", archive["files/index.html"])
+	}
+	if string(archive["uploads/"+storedName]) != "hello" {
+		t.Fatalf("archive missing upload: %#v", archive)
+	}
+
+	res = request(t, a, http.MethodDelete, "/api/sites/files/uploads?name="+storedName, nil, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("upload delete failed: %d %s", res.Code, res.Body.String())
+	}
+	res = request(t, a, http.MethodGet, out["url"], nil, "")
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("deleted upload should be gone, got %d", res.Code)
 	}
 }
 
@@ -589,4 +674,26 @@ func rawRequest(t *testing.T, h http.Handler, method, url string, body io.Reader
 
 func basicAuth(username, password string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
+}
+
+func readZip(t *testing.T, b []byte) map[string][]byte {
+	t.Helper()
+	reader, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string][]byte{}
+	for _, file := range reader.File {
+		rc, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		content, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[file.Name] = content
+	}
+	return out
 }

@@ -20,7 +20,9 @@ Open the dashboard:
 https://<flink-server>/_flink
 ```
 
-Sign in, create a site, edit `index.html`, save it, and open:
+Sign in to list sites, inspect hosted files, inspect JSON state, download or delete uploads, visit sites, delete sites, and download a complete site archive.
+
+Open a published site:
 
 ```text
 https://<flink-server>/t/<tenant>/s/<site>/
@@ -36,10 +38,11 @@ https://<flink-server>/s/<site>/
 
 The `flink` CLI is for website authors and agents. It only talks to a running Flink server over HTTP.
 
-Build the CLI from this repo:
+Download the CLI from the latest release:
 
 ```sh
-make build
+curl -L -o flink.tar.gz https://github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz
+tar -xzf flink.tar.gz
 ```
 
 Create and publish a site:
@@ -71,6 +74,13 @@ List sites:
 
 ```sh
 bin/flink --server http://localhost:8080 --tenant demo --password flink site list
+```
+
+Publish a built-in example:
+
+```sh
+bin/flink --server http://localhost:8080 --tenant demo --password flink site example
+bin/flink --server http://localhost:8080 --tenant demo --password flink site example hello chat
 ```
 
 List or remove published files:
@@ -389,6 +399,8 @@ server/storage/       storage abstraction and backends
 server/frontend/      React/Vite/Tailwind dashboard
 server/extras/        systemd unit and install/update script
 .ona/automations.yaml Ona service and build/test tasks
+.goreleaser.yaml      release archives for the CLI and server
+.github/workflows/    GitHub Actions release workflow
 ```
 
 ## Build And Test
@@ -412,3 +424,16 @@ go test ./shared/... ./cli/... ./server/...
 cd client && npm test && npm run build
 cd server/frontend && npm run typecheck && npm run build
 ```
+
+## Release
+
+Tagged releases use GoReleaser:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The GitHub workflow builds `flink` and `flink-server` for Linux and macOS on amd64 and arm64. Server archives are named `flink-server_<os>_<arch>.tar.gz` and include `server/extras` as `extras/`, which keeps the curlable installer URL format stable.
+
+Manual workflow runs build a local snapshot without publishing a GitHub release.

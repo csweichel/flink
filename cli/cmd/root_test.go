@@ -201,6 +201,58 @@ func TestSiteListAndDeleteUseExpectedAPI(t *testing.T) {
 	}
 }
 
+func TestSiteExampleListsAndPublishesBuiltInExamples(t *testing.T) {
+	out, err := runCommand("site", "example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"chat", "data", "library", "upload"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("example list missing %q: %q", want, out)
+		}
+	}
+
+	var createdSlug string
+	var publishedPath string
+	var publishedBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user, password, ok := r.BasicAuth(); !ok || user != "alice" || password != "secret" {
+			t.Fatalf("missing or wrong auth")
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/sites":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			createdSlug = body["slug"]
+			_ = json.NewEncoder(w).Encode(siteMeta{Slug: createdSlug, UpdatedAt: time.Now().UTC()})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/sites/demo/files":
+			publishedPath = r.URL.Query().Get("path")
+			b, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			publishedBody = string(b)
+			_ = json.NewEncoder(w).Encode(map[string]string{"path": publishedPath})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	out, err = runCommand("site", "example", "demo", "chat", "--server", server.URL, "--tenant", "alice", "--password", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdSlug != "demo" || publishedPath != "index.html" || !strings.Contains(publishedBody, "Realtime chat") {
+		t.Fatalf("example was not published: slug=%q path=%q body=%q", createdSlug, publishedPath, publishedBody)
+	}
+	if !strings.Contains(out, "published chat example") || !strings.Contains(out, server.URL+"/t/alice/s/demo/") {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
 func TestMissingTenantCredentialsFailBeforeNetwork(t *testing.T) {
 	_, err := runCommand("site", "list", "--server", "http://127.0.0.1:1")
 	if err == nil || !strings.Contains(err.Error(), "missing tenant username") {

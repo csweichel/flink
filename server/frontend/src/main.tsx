@@ -1,9 +1,6 @@
-import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { examples } from "./examples";
 import "./index.css";
-
-const defaultPath = "index.html";
 
 interface SiteMeta {
   slug: string;
@@ -12,9 +9,15 @@ interface SiteMeta {
   updatedAt: string;
 }
 
-interface SiteFile {
+interface SiteFileInfo {
   path: string;
-  content: string;
+  size: number;
+}
+
+interface UploadInfo {
+  name: string;
+  url: string;
+  size: number;
 }
 
 interface Tenant {
@@ -22,27 +25,42 @@ interface Tenant {
   status: string;
 }
 
+interface SiteDetails {
+  files: SiteFileInfo[];
+  data: Record<string, unknown>;
+  uploads: UploadInfo[];
+}
+
 type RequestOptions = RequestInit & {
   headers?: HeadersInit;
 };
 
 function App() {
-  const [sites, setSites] = useState<SiteMeta[]>([]);
-  const [current, setCurrent] = useState("");
-  const [slug, setSlug] = useState("");
-  const [filePath, setFilePath] = useState(defaultPath);
-  const [content, setContent] = useState("");
-  const [status, setStatus] = useState("");
   const [tenant, setTenant] = useState<Tenant | null>(null);
+  const [sites, setSites] = useState<SiteMeta[]>([]);
+  const [selected, setSelected] = useState("");
+  const [details, setDetails] = useState<SiteDetails | null>(null);
+  const [status, setStatus] = useState("");
 
-  const currentSite = useMemo(() => sites.find((site) => site.slug === current), [sites, current]);
+  const selectedSite = useMemo(() => sites.find((site) => site.slug === selected), [sites, selected]);
 
   useEffect(() => {
     refresh().catch((err: Error) => setStatus(err.message));
   }, []);
 
+  useEffect(() => {
+    if (!selected) {
+      setDetails(null);
+      return;
+    }
+    loadDetails(selected).catch((err: Error) => setStatus(err.message));
+  }, [selected]);
+
   async function api<T>(url: string, options: RequestOptions = {}): Promise<T> {
-    const headers = new Headers({ "content-type": "application/json" });
+    const headers = new Headers();
+    if (options.body && !(options.body instanceof FormData)) {
+      headers.set("content-type", "application/json");
+    }
     new Headers(options.headers).forEach((value, key) => headers.set(key, value));
     const res = await fetch(url, {
       ...options,
@@ -61,87 +79,60 @@ function App() {
     const nextSites = (await api<SiteMeta[] | null>("/api/sites")) ?? [];
     const safeSites = Array.isArray(nextSites) ? nextSites : [];
     setSites(safeSites);
-    if (!current && safeSites[0]) {
-      await selectSite(safeSites[0].slug);
-    }
-  }
-
-  async function createSite(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const clean = slug.trim();
-    if (!clean) {
+    if (safeSites.length === 0) {
+      setSelected("");
+      setStatus("No sites published yet. Use the Flink CLI to publish one.");
       return;
     }
-    await api<SiteMeta>("/api/sites", { method: "POST", body: JSON.stringify({ slug: clean }) });
-    setSlug("");
-    await selectSite(clean);
-    await refresh();
-  }
-
-  async function selectSite(nextSlug: string, nextPath = filePath || defaultPath) {
-    setCurrent(nextSlug);
-    setFilePath(nextPath);
-    const out = await api<SiteFile>(`/api/sites/${nextSlug}/files?path=${encodeURIComponent(nextPath)}`);
-    setContent(out.content);
-    setStatus(`Loaded ${nextPath}`);
-  }
-
-  async function deleteCurrentSite() {
-    if (!current) {
-      return;
+    if (!selected || !safeSites.some((site) => site.slug === selected)) {
+      setSelected(safeSites[0].slug);
     }
-    const siteSlug = current;
-    if (!window.confirm(`Delete "${siteSlug}" and all of its files, data, and uploads?`)) {
+  }
+
+  async function loadDetails(siteSlug: string) {
+    setStatus(`Loading ${siteSlug}...`);
+    const [files, data, uploads] = await Promise.all([
+      api<SiteFileInfo[]>(`/api/sites/${siteSlug}/files`),
+      api<Record<string, unknown>>(`/api/sites/${siteSlug}/data/`),
+      api<UploadInfo[]>(`/api/sites/${siteSlug}/uploads`),
+    ]);
+    setDetails({
+      files: Array.isArray(files) ? files : [],
+      data: data ?? {},
+      uploads: Array.isArray(uploads) ? uploads : [],
+    });
+    setStatus(`Loaded ${siteSlug}.`);
+  }
+
+  async function deleteSite(siteSlug: string) {
+    if (!window.confirm(`Delete "${siteSlug}" and all of its files, state, and uploads?`)) {
       return;
     }
     await api<{ deleted: true }>(`/api/sites/${siteSlug}`, { method: "DELETE" });
     const remaining = sites.filter((site) => site.slug !== siteSlug);
     setSites(remaining);
-    setCurrent("");
-    setContent("");
-    setFilePath(defaultPath);
-    if (remaining[0]) {
-      await selectSite(remaining[0].slug, defaultPath);
-      setStatus(`Deleted ${siteSlug}. Loaded ${remaining[0].slug}.`);
-      return;
-    }
+    setSelected(remaining[0]?.slug ?? "");
     setStatus(`Deleted ${siteSlug}.`);
   }
 
-  async function loadFile() {
-    if (!current) {
+  async function deleteUpload(upload: UploadInfo) {
+    if (!selected || !window.confirm(`Delete upload "${upload.name}"?`)) {
       return;
     }
-    const p = filePath || defaultPath;
-    const out = await api<SiteFile>(`/api/sites/${current}/files?path=${encodeURIComponent(p)}`);
-    setContent(out.content);
-    setStatus(`Loaded ${p}`);
-  }
-
-  async function saveFile() {
-    if (!current) {
-      return;
-    }
-    const p = filePath || defaultPath;
-    await api<{ path: string }>(`/api/sites/${current}/files?path=${encodeURIComponent(p)}`, {
-      method: "PUT",
-      body: JSON.stringify({ content }),
-    });
-    setStatus(`Saved. Live at ${siteURL(current)}`);
-    await refresh();
-  }
-
-  function loadExample(key: string) {
-    if (!key) {
-      return;
-    }
-    setFilePath(defaultPath);
-    setContent(examples[key] ?? "");
-    setStatus("Example loaded. Save to publish.");
+    await api<{ deleted: true }>(`/api/sites/${selected}/uploads?name=${encodeURIComponent(upload.name)}`, { method: "DELETE" });
+    await loadDetails(selected);
+    setStatus(`Deleted upload ${upload.name}.`);
   }
 
   function siteURL(siteSlug: string) {
     return tenant ? `/t/${tenant.username}/s/${siteSlug}/` : `/s/${siteSlug}/`;
+  }
+
+  function siteFileURL(siteSlug: string, path: string) {
+    if (path === "index.html") {
+      return siteURL(siteSlug);
+    }
+    return siteURL(siteSlug) + path.split("/").map(encodeURIComponent).join("/");
   }
 
   return (
@@ -153,91 +144,203 @@ function App() {
         </a>
         <div className="flex items-center gap-3 text-sm">
           <span className="font-medium text-neutral-600">{tenant?.username}</span>
-          <a className="font-medium text-teal-700 hover:text-teal-900" href={current ? siteURL(current) : "#"} target="_blank" rel="noreferrer">
-            Open site
-          </a>
           <a className="font-medium text-neutral-600 hover:text-neutral-950" href="/_flink/logout">
             Sign out
           </a>
         </div>
       </header>
 
-      <main className="grid min-h-[calc(100vh-3.5rem)] grid-cols-1 md:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="border-b border-stone-300 p-3 md:border-b-0 md:border-r">
-          <form className="flex gap-2" onSubmit={createSite}>
-            <input
-              className="min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-700"
-              value={slug}
-              pattern="[a-z0-9-]+"
-              placeholder="new-site"
-              onChange={(event) => setSlug(event.target.value)}
-              required
-            />
-            <button className="rounded-md border border-teal-700 bg-teal-700 px-3 py-2 text-sm font-medium text-white" type="submit">
-              Create
+      <main className="mx-auto grid w-full max-w-7xl gap-5 p-4 md:p-6">
+        <section className="grid gap-3">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h1 className="text-xl font-semibold">Sites</h1>
+              <p className="mt-1 text-sm text-neutral-600">Published sites for this tenant. Use the CLI to create or update content.</p>
+            </div>
+            <button className="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium" type="button" onClick={() => refresh().catch((err: Error) => setStatus(err.message))}>
+              Refresh
             </button>
-          </form>
-          <p className="mt-3 text-xs leading-5 text-neutral-600">
-            Tenant hosting works at <code>/t/tenant/s/site-name/</code>. Signed-in shorthand works at <code>/s/site-name/</code>.
-          </p>
-          <div className="mt-4 space-y-2">
-            {sites.map((site) => (
-              <button
-                key={site.slug}
-                className={`block w-full rounded-md border bg-white p-3 text-left text-sm ${
-                  site.slug === current ? "border-teal-700 shadow-[inset_3px_0_0_#0f766e]" : "border-stone-300"
-                }`}
-                type="button"
-                onClick={() => selectSite(site.slug).catch((err: Error) => setStatus(err.message))}
-              >
-                <span className="block font-semibold">{site.slug}</span>
-                <span className="block text-xs text-neutral-600">{new Date(site.updatedAt).toLocaleString()}</span>
-              </button>
-            ))}
           </div>
-        </aside>
 
-        <section className="grid min-h-[640px] grid-rows-[auto_minmax(0,1fr)_auto] gap-3 p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <strong className="mr-2 text-sm">{currentSite?.slug || "No site selected"}</strong>
-            <input
-              className="w-44 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-700"
-              value={filePath}
-              onChange={(event) => setFilePath(event.target.value)}
-            />
-            <button className="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm" type="button" onClick={() => loadFile().catch((err: Error) => setStatus(err.message))}>
-              Load
-            </button>
-            <button className="rounded-md border border-teal-700 bg-teal-700 px-3 py-2 text-sm font-medium text-white" type="button" onClick={() => saveFile().catch((err: Error) => setStatus(err.message))}>
-              Save
-            </button>
-            <button
-              className="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 disabled:cursor-not-allowed disabled:border-stone-200 disabled:text-neutral-400"
-              type="button"
-              disabled={!current}
-              onClick={() => deleteCurrentSite().catch((err: Error) => setStatus(err.message))}
-            >
-              Delete site
-            </button>
-            <select className="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm" defaultValue="" onChange={(event) => loadExample(event.target.value)}>
-              <option value="">Examples...</option>
-              <option value="upload">File upload</option>
-              <option value="data">Data save/load</option>
-              <option value="chat">Realtime chat</option>
-              <option value="library">Shared library import</option>
-            </select>
+          <div className="overflow-hidden rounded-md border border-stone-300 bg-white">
+            <table className="w-full border-collapse text-left text-sm">
+              <thead className="bg-stone-50 text-xs uppercase text-neutral-500">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">Site</th>
+                  <th className="px-3 py-2 font-semibold">Updated</th>
+                  <th className="px-3 py-2 font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sites.map((site) => (
+                  <tr key={site.slug} className={site.slug === selected ? "bg-teal-50" : "border-t border-stone-200"}>
+                    <td className="px-3 py-3">
+                      <button className="font-semibold text-teal-800 hover:text-teal-950" type="button" onClick={() => setSelected(site.slug)}>
+                        {site.slug}
+                      </button>
+                    </td>
+                    <td className="px-3 py-3 text-neutral-600">{formatDate(site.updatedAt)}</td>
+                    <td className="px-3 py-3">
+                      <div className="flex flex-wrap gap-2">
+                        <button className="rounded-md border border-stone-300 bg-white px-3 py-1.5 font-medium" type="button" onClick={() => setSelected(site.slug)}>
+                          Inspect
+                        </button>
+                        <a className="rounded-md border border-stone-300 bg-white px-3 py-1.5 font-medium" href={siteURL(site.slug)} target="_blank" rel="noreferrer">
+                          Visit
+                        </a>
+                        <a className="rounded-md border border-stone-300 bg-white px-3 py-1.5 font-medium" href={`/api/sites/${site.slug}/archive`}>
+                          Archive
+                        </a>
+                        <button className="rounded-md border border-red-200 bg-white px-3 py-1.5 font-medium text-red-700" type="button" onClick={() => deleteSite(site.slug).catch((err: Error) => setStatus(err.message))}>
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {sites.length === 0 ? (
+                  <tr>
+                    <td className="px-3 py-8 text-center text-neutral-600" colSpan={3}>
+                      No sites published yet.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
           </div>
-          <textarea
-            className="h-full min-h-[520px] resize-none rounded-md border border-stone-300 bg-neutral-950 p-4 font-mono text-sm leading-6 text-stone-50 outline-none"
-            value={content}
-            spellCheck={false}
-            onChange={(event) => setContent(event.target.value)}
-          />
-          <div className="min-h-6 text-sm text-neutral-600">{status}</div>
         </section>
+
+        <section className="grid gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">{selectedSite?.slug ?? "No site selected"}</h2>
+              {selectedSite ? <p className="text-sm text-neutral-600">Created {formatDate(selectedSite.createdAt)}</p> : null}
+            </div>
+            {selectedSite ? (
+              <div className="flex flex-wrap gap-2">
+                <a className="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium" href={siteURL(selectedSite.slug)} target="_blank" rel="noreferrer">
+                  Visit site
+                </a>
+                <a className="rounded-md border border-teal-700 bg-teal-700 px-3 py-2 text-sm font-medium text-white" href={`/api/sites/${selectedSite.slug}/archive`}>
+                  Download archive
+                </a>
+              </div>
+            ) : null}
+          </div>
+
+          {selectedSite && details ? (
+            <div className="grid gap-4">
+              <FilesTable files={details.files} siteSlug={selectedSite.slug} fileURL={siteFileURL} />
+              <DataTable data={details.data} />
+              <UploadsTable uploads={details.uploads} onDelete={(upload) => deleteUpload(upload).catch((err: Error) => setStatus(err.message))} />
+            </div>
+          ) : null}
+        </section>
+
+        <div className="min-h-6 text-sm text-neutral-600" role="status">
+          {status}
+        </div>
       </main>
     </div>
   );
+}
+
+function FilesTable({ files, siteSlug, fileURL }: { files: SiteFileInfo[]; siteSlug: string; fileURL: (siteSlug: string, path: string) => string }) {
+  return (
+    <Table title="Hosted Files" empty="No hosted files.">
+      {files.map((file) => (
+        <tr key={file.path} className="border-t border-stone-200">
+          <td className="px-3 py-2 font-mono text-xs">{file.path}</td>
+          <td className="px-3 py-2 text-right text-neutral-600">{formatBytes(file.size)}</td>
+          <td className="px-3 py-2 text-right">
+            <a className="font-medium text-teal-700 hover:text-teal-950" href={fileURL(siteSlug, file.path)} target="_blank" rel="noreferrer">
+              Download
+            </a>
+          </td>
+        </tr>
+      ))}
+    </Table>
+  );
+}
+
+function DataTable({ data }: { data: Record<string, unknown> }) {
+  const entries = Object.entries(data).sort(([a], [b]) => a.localeCompare(b));
+  return (
+    <Table title="State / DB" empty="No state stored.">
+      {entries.map(([key, value]) => (
+        <tr key={key} className="border-t border-stone-200 align-top">
+          <td className="w-56 px-3 py-2 font-mono text-xs">{key}</td>
+          <td className="px-3 py-2">
+            <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-words rounded bg-stone-50 p-2 font-mono text-xs leading-5 text-neutral-800">{JSON.stringify(value, null, 2)}</pre>
+          </td>
+          <td className="px-3 py-2 text-right text-neutral-500">{formatBytes(JSON.stringify(value).length)}</td>
+        </tr>
+      ))}
+    </Table>
+  );
+}
+
+function UploadsTable({ uploads, onDelete }: { uploads: UploadInfo[]; onDelete: (upload: UploadInfo) => void }) {
+  return (
+    <Table title="Uploads" empty="No uploaded files.">
+      {uploads.map((upload) => (
+        <tr key={upload.name} className="border-t border-stone-200">
+          <td className="px-3 py-2 font-mono text-xs">{upload.name}</td>
+          <td className="px-3 py-2 text-right text-neutral-600">{formatBytes(upload.size)}</td>
+          <td className="px-3 py-2 text-right">
+            <div className="flex justify-end gap-3">
+              <a className="font-medium text-teal-700 hover:text-teal-950" href={upload.url} target="_blank" rel="noreferrer">
+                Download
+              </a>
+              <button className="font-medium text-red-700 hover:text-red-900" type="button" onClick={() => onDelete(upload)}>
+                Delete
+              </button>
+            </div>
+          </td>
+        </tr>
+      ))}
+    </Table>
+  );
+}
+
+function Table({ title, empty, children }: { title: string; empty: string; children: React.ReactNode }) {
+  const rows = React.Children.count(children);
+  return (
+    <div className="overflow-hidden rounded-md border border-stone-300 bg-white">
+      <div className="border-b border-stone-200 bg-stone-50 px-3 py-2 text-sm font-semibold">{title}</div>
+      <table className="w-full border-collapse text-left text-sm">
+        <tbody>
+          {rows > 0 ? (
+            children
+          ) : (
+            <tr>
+              <td className="px-3 py-5 text-center text-neutral-600">{empty}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function formatDate(value: string) {
+  if (!value) {
+    return "-";
+  }
+  return new Date(value).toLocaleString();
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
 const root = document.getElementById("root");

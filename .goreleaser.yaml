@@ -1,0 +1,77 @@
+version: 2
+
+project_name: flink
+
+before:
+  hooks:
+    - make frontend-build
+
+builds:
+  - id: flink
+    main: ./cli
+    binary: flink
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+  - id: flink-server
+    main: ./server
+    binary: flink-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - id: flink
+    ids:
+      - flink
+    name_template: >-
+      flink_
+      {{- .Os }}_
+      {{- .Arch }}
+    formats:
+      - tar.gz
+    files:
+      - README.md
+      - AGENTS.md
+
+  - id: flink-server
+    ids:
+      - flink-server
+    name_template: >-
+      flink-server_
+      {{- .Os }}_
+      {{- .Arch }}
+    formats:
+      - tar.gz
+    files:
+      - README.md
+      - src: server/extras/*
+        dst: extras
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

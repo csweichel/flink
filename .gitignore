@@ -1,6 +1,7 @@
 # Local binaries and runtime data
 /flink
 bin/
+dist/
 data/
 tmp-smoke-data/
 .flink/
