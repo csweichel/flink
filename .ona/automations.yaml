@@ -1,0 +1,20 @@
+services:
+  flink:
+    name: Flink server
+    description: Runs the Flink dashboard, static hosting, APIs, uploads, and WebSocket rooms.
+    triggeredBy:
+      - manual
+    commands:
+      start: |
+        gitpod environment port open 8080 --name flink --protocol http || true
+        make run
+      ready: curl -fsS http://localhost:8080/flink.js >/dev/null
+
+tasks:
+  build:
+    name: Build Flink
+    command: make build
+
+  test:
+    name: Test Flink
+    command: make test

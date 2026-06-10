@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flink Login</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; display: grid; min-height: 100vh; place-items: center; background: #f7f7f4; color: #171717; }
+    form { width: min(360px, calc(100vw - 32px)); display: grid; gap: 12px; }
+    input, button { font: inherit; padding: 12px 14px; border: 1px solid #c9c9c2; border-radius: 6px; }
+    button { background: #151515; color: white; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <form method="post" action="/_flink/login">
+    <h1>Flink</h1>
+    <input name="password" type="password" placeholder="Password" autofocus>
+    <button>Sign in</button>
+  </form>
+</body>
+</html>

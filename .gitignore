@@ -1,0 +1,31 @@
+# Local binaries and runtime data
+/flink
+bin/
+data/
+tmp-smoke-data/
+*.db
+*.db-shm
+*.db-wal
+
+# Local configuration and secrets
+.env
+.env.*
+flink.yaml
+flink.yml
+
+# Go test outputs
+*.test
+coverage.out
+
+# JavaScript dependencies and build outputs
+server/frontend/node_modules/
+server/frontend/dist/
+server/frontend/static/flink.js
+client/node_modules/
+client/dist/
+
+# Tool-local state
+.ona/review/
+
+# OS/editor noise
+.DS_Store

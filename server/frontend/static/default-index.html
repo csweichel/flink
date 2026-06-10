@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New Flink Site</title>
+  <script src="/flink.js"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; margin: 3rem; line-height: 1.5; }
+    button, input { font: inherit; padding: .6rem .75rem; }
+  </style>
+</head>
+<body>
+  <h1>Your Flink site is live</h1>
+  <p>Edit this page from the dashboard or CLI. The browser already has <code>flink</code> for data, uploads, realtime, and AI.</p>
+  <input id="note" placeholder="Save a note">
+  <button onclick="save()">Save</button>
+  <pre id="out"></pre>
+  <script>
+    async function save() {
+      await flink.set('note', { text: note.value, savedAt: new Date().toISOString() });
+      out.textContent = JSON.stringify(await flink.get('note'), null, 2);
+    }
+    save();
+  </script>
+</body>
+</html>
