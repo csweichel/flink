@@ -22,17 +22,19 @@ https://<flink-server>/_flink
 
 Sign in to list sites, inspect hosted files, inspect JSON state, download or delete uploads, visit sites, delete sites, and download a complete site archive.
 
-Open a published site:
+On a normal Flink server with wildcard DNS configured, open a published site at its tenant-scoped domain:
 
 ```text
-https://<flink-server>/t/<tenant>/s/<site>/
+https://<tenant>--<site>.<flink-base-host>/
 ```
 
-Signed-in users can also use the shorthand:
+For example:
 
 ```text
-https://<flink-server>/s/<site>/
+https://demo--hello.flink.internal/
 ```
+
+Path-based hosting is only the fallback for local development or servers without `baseHost` configured: `https://<flink-server>/t/<tenant>/s/<site>/`.
 
 ## Publish With The User CLI
 
@@ -48,53 +50,55 @@ tar -xzf flink.tar.gz
 Create and publish a site:
 
 ```sh
-bin/flink --server http://localhost:8080 --tenant demo --password flink site create hello
-bin/flink --server http://localhost:8080 --tenant demo --password flink site write hello ./index.html
+bin/flink --server https://flink.internal --tenant demo --password flink site create hello
+bin/flink --server https://flink.internal --tenant demo --password flink site write hello ./index.html
 ```
 
 Publish a whole directory tree:
 
 ```sh
-bin/flink --server http://localhost:8080 --tenant demo --password flink site write hello ./dist
+bin/flink --server https://flink.internal --tenant demo --password flink site write hello ./dist
 ```
 
 Files are served from the same site base. For example, `./dist/assets/app.css` is available at:
 
 ```text
-http://localhost:8080/t/demo/s/hello/assets/app.css
+https://demo--hello.flink.internal/assets/app.css
 ```
 
 Directory indexes are served as expected, so `./dist/docs/index.html` is available at:
 
 ```text
-http://localhost:8080/t/demo/s/hello/docs/
+https://demo--hello.flink.internal/docs/
 ```
+
+When running locally on `localhost` without wildcard DNS, use the fallback path form instead: `http://localhost:8080/t/demo/s/hello/`.
 
 List sites:
 
 ```sh
-bin/flink --server http://localhost:8080 --tenant demo --password flink site list
+bin/flink --server https://flink.internal --tenant demo --password flink site list
 ```
 
 Publish a built-in example:
 
 ```sh
-bin/flink --server http://localhost:8080 --tenant demo --password flink site example
-bin/flink --server http://localhost:8080 --tenant demo --password flink site example hello chat
+bin/flink --server https://flink.internal --tenant demo --password flink site example
+bin/flink --server https://flink.internal --tenant demo --password flink site example hello chat
 ```
 
 List or remove published files:
 
 ```sh
-bin/flink --server http://localhost:8080 --tenant demo --password flink site files hello
-bin/flink --server http://localhost:8080 --tenant demo --password flink site files hello assets/
-bin/flink --server http://localhost:8080 --tenant demo --password flink site delete-file hello assets/app.css
+bin/flink --server https://flink.internal --tenant demo --password flink site files hello
+bin/flink --server https://flink.internal --tenant demo --password flink site files hello assets/
+bin/flink --server https://flink.internal --tenant demo --password flink site delete-file hello assets/app.css
 ```
 
 To avoid repeating flags:
 
 ```sh
-export FLINK_SERVER=http://localhost:8080
+export FLINK_SERVER=https://flink.internal
 export FLINK_TENANT=demo
 export FLINK_PASSWORD=flink
 
@@ -123,8 +127,10 @@ bin/flink site write my-site ./dist
 Then open:
 
 ```text
-$FLINK_SERVER/t/$FLINK_TENANT/s/my-site/
+https://$FLINK_TENANT--my-site.<flink-base-host>/
 ```
+
+If the server has no `baseHost`, use the fallback URL printed by the CLI.
 
 ## Browser APIs For Hosted Sites
 
@@ -154,7 +160,7 @@ For TypeScript projects, use the client package:
 import { createFlinkClient } from "@flink/client";
 
 const flink = createFlinkClient({
-  baseUrl: "http://localhost:8080",
+  baseUrl: "https://flink.internal",
   tenant: "demo",
   site: "hello",
 });
@@ -189,7 +195,7 @@ If AI is not configured on the server, AI calls return a stable "not configured"
 
 ## Run A Local Flink Server
 
-For development or local demos:
+For development or local demos, `localhost` usually has no wildcard DNS. That means local runs use path-based fallback URLs unless you add your own wildcard DNS entry.
 
 ```sh
 make run
@@ -223,6 +229,8 @@ ai:
 bootstrapTenants: []
 ```
 
+For shared environments, set `baseHost` to the wildcard domain and route both the base domain and wildcard subdomains to the Flink server.
+
 Register at:
 
 ```text
@@ -254,28 +262,28 @@ autoApproveTenants: true
 
 The server is a single Go binary. It serves the dashboard, hosted sites, APIs, uploads, websocket rooms, and tenant sessions.
 
-Install or update it on a VPS with the curlable installer:
+Install or update it as the current Unix user:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/csweichel/flink/main/server/extras/install.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/csweichel/flink/main/server/extras/install.sh | sh
 ```
 
 The installer writes:
 
 ```text
-/opt/flink/flink-server       server binary
-/etc/flink/flink.yaml         server config, created only if missing
-/var/lib/flink                default data directory
-/etc/systemd/system/flink.service
+~/.local/bin/flink-server                 server binary
+~/.config/flink/flink.yaml                server config, created only if missing
+~/.local/share/flink/data                 default data directory
+~/.config/systemd/user/flink.service      user systemd unit
 ```
 
 Default production-style config:
 
 ```yaml
 addr: :8080
-dataDir: /var/lib/flink
+dataDir: /home/alice/.local/share/flink/data
 storage: bbolt
-baseHost: ""
+baseHost: flink.internal
 autoApproveTenants: false
 ai:
   apiKey: ""
@@ -284,12 +292,12 @@ ai:
 bootstrapTenants: []
 ```
 
-Run the same installer command again to update the binary and restart the service.
+Run the same installer command again to update the binary and restart the user service.
 
 For unreleased builds or private artifacts:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/csweichel/flink/main/server/extras/install.sh | sudo FLINK_DOWNLOAD_URL=https://example.com/flink-server_linux_amd64.tar.gz sh
+curl -fsSL https://raw.githubusercontent.com/csweichel/flink/main/server/extras/install.sh | FLINK_DOWNLOAD_URL=https://example.com/flink-server_linux_amd64.tar.gz sh
 ```
 
 Useful installer variables:
@@ -298,10 +306,27 @@ Useful installer variables:
 FLINK_DOWNLOAD_URL       exact binary, .gz, or .tar.gz URL to install
 FLINK_VERSION            GitHub release tag, defaults to latest
 FLINK_REPO               GitHub repo for releases, defaults to csweichel/flink
-FLINK_INSTALL_DATA_DIR   initial config data directory, defaults to /var/lib/flink
+FLINK_INSTALL_BIN_DIR    binary directory, defaults to ~/.local/bin
+FLINK_INSTALL_CONFIG_DIR config directory, defaults to ~/.config/flink
+FLINK_INSTALL_DATA_DIR   initial config data directory, defaults to ~/.local/share/flink/data
+FLINK_INSTALL_BASE_HOST  initial wildcard site domain, defaults to flink.internal
 ```
 
-Put Flink behind Caddy, nginx, or another reverse proxy:
+Control the service with user systemd:
+
+```sh
+systemctl --user status flink
+systemctl --user restart flink
+journalctl --user -u flink -f
+```
+
+If the server should start at boot without an active login session, enable lingering for the Flink Unix user if your host allows it:
+
+```sh
+loginctl enable-linger "$USER"
+```
+
+Put Flink behind Caddy, nginx, or another reverse proxy that routes both the base domain and wildcard subdomains to `127.0.0.1:8080`:
 
 ```caddyfile
 flink.internal, *.flink.internal {
@@ -309,16 +334,16 @@ flink.internal, *.flink.internal {
 }
 ```
 
-Path-based hosting works without wildcard DNS:
-
-```text
-https://flink.internal/t/alice/s/demo/
-```
-
-With wildcard DNS and `baseHost` configured, tenant site subdomains can be served as:
+With wildcard DNS and `baseHost` configured, tenant site domains are served as:
 
 ```text
 https://alice--demo.flink.internal/
+```
+
+Path-based hosting works without wildcard DNS, but treat it as a fallback:
+
+```text
+https://flink.internal/t/alice/s/demo/
 ```
 
 ## Tenant Administration
@@ -326,14 +351,14 @@ https://alice--demo.flink.internal/
 Server operators use `flink-server`, not the user CLI:
 
 ```sh
-flink-server tenants list --config /etc/flink/flink.yaml
-flink-server tenants pending --config /etc/flink/flink.yaml
-flink-server tenants get alice --config /etc/flink/flink.yaml
-flink-server tenants approve alice --config /etc/flink/flink.yaml
-flink-server tenants deny alice --config /etc/flink/flink.yaml
-flink-server tenants reset-password alice new-secret --config /etc/flink/flink.yaml
-flink-server tenants delete alice --config /etc/flink/flink.yaml
-flink-server tenants bootstrap demo flink --config /etc/flink/flink.yaml
+flink-server tenants list --config ~/.config/flink/flink.yaml
+flink-server tenants pending --config ~/.config/flink/flink.yaml
+flink-server tenants get alice --config ~/.config/flink/flink.yaml
+flink-server tenants approve alice --config ~/.config/flink/flink.yaml
+flink-server tenants deny alice --config ~/.config/flink/flink.yaml
+flink-server tenants reset-password alice new-secret --config ~/.config/flink/flink.yaml
+flink-server tenants delete alice --config ~/.config/flink/flink.yaml
+flink-server tenants bootstrap demo flink --config ~/.config/flink/flink.yaml
 ```
 
 The web app uses tenant session cookies. The user CLI uses HTTP Basic Auth with the tenant username and password.
@@ -358,7 +383,7 @@ bbolt   single-file embedded database at dataDir/flink.db
 Configure storage in YAML:
 
 ```yaml
-dataDir: /var/lib/flink
+dataDir: /home/alice/.local/share/flink/data
 storage: bbolt
 ```
 

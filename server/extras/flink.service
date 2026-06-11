@@ -6,16 +6,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=flink
-Group=flink
-WorkingDirectory=/opt/flink
-ExecStart=/opt/flink/flink-server --config /etc/flink/flink.yaml
+WorkingDirectory=%h/.local/share/flink
+ExecStart=%h/.local/bin/flink-server --config %h/.config/flink/flink.yaml
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
-ReadWritePaths=/var/lib/flink /etc/flink /opt/flink
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

@@ -114,7 +114,7 @@ autoApproveTenants: true
 When asked to build a prototype on Flink, prefer using Flink itself instead of adding a new app framework:
 
 1. Sign in as an approved tenant.
-2. Create a site in the dashboard or with the user CLI.
+2. Create or update a site with the user CLI.
 3. Publish a single `index.html` first, or publish a static directory when the prototype has assets/routes.
 4. Use the browser SDK from the hosted shared library:
 
@@ -130,11 +130,17 @@ When asked to build a prototype on Flink, prefer using Flink itself instead of a
 The fastest CLI loop for a tenant is:
 
 ```sh
-flink --server http://localhost:8080 --tenant demo --password flink site create my-prototype
-flink --server http://localhost:8080 --tenant demo --password flink site write my-prototype ./dist
+flink --server https://flink.internal --tenant demo --password flink site create my-prototype
+flink --server https://flink.internal --tenant demo --password flink site write my-prototype ./dist
 ```
 
-Then open:
+On a shared Flink server with `baseHost` and wildcard DNS configured, open the domain-based site URL:
+
+```text
+https://demo--my-prototype.flink.internal/
+```
+
+Domain-based hosting is the preferred shape for Flink. Path-based hosting is only the fallback for localhost or servers without `baseHost` configured:
 
 ```text
 http://localhost:8080/t/demo/s/my-prototype/
