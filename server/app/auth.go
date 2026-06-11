@@ -150,7 +150,13 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, tenantFromContext(r.Context()), nil)
+	writeJSON(w, struct {
+		api.PublicTenant
+		BaseHost string `json:"baseHost,omitempty"`
+	}{
+		PublicTenant: tenantFromContext(r.Context()),
+		BaseHost:     a.baseHost,
+	}, nil)
 }
 
 func wantsHTML(r *http.Request) bool {

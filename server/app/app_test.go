@@ -270,6 +270,24 @@ func TestTenantSessionCookieAuthenticatesDashboardAndAPI(t *testing.T) {
 		t.Fatalf("session cookie should authenticate API: %d %s", res.Code, res.Body.String())
 	}
 
+	req = httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.AddCookie(&http.Cookie{Name: "flink_session", Value: session.Token})
+	res = httptest.NewRecorder()
+	a.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("session cookie should authenticate me endpoint: %d %s", res.Code, res.Body.String())
+	}
+	var me struct {
+		Username string `json:"username"`
+		BaseHost string `json:"baseHost"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &me); err != nil {
+		t.Fatal(err)
+	}
+	if me.Username != testTenant || me.BaseHost != "quick.internal" {
+		t.Fatalf("unexpected me response: %#v", me)
+	}
+
 	req = httptest.NewRequest(http.MethodGet, "/_flink", nil)
 	req.AddCookie(&http.Cookie{Name: "flink_session", Value: session.Token})
 	res = httptest.NewRecorder()

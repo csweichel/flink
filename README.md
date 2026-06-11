@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="Flink" width="120">
+</p>
+
 # Flink
 
 Flink is a simple application server built for agents that need to turn prototype apps and single-page apps into live internal URLs. It gives every approved tenant instant site hosting, a user CLI, browser-callable storage APIs, uploads, realtime rooms, optional AI calls, and a small dashboard for inspecting what was published.

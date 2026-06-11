@@ -29,6 +29,7 @@ interface UploadInfo {
 interface Tenant {
   username: string;
   status: string;
+  baseHost?: string;
 }
 
 interface SiteDetails {
@@ -131,7 +132,13 @@ function App() {
   }
 
   function siteURL(siteSlug: string) {
-    return tenant ? `/t/${tenant.username}/s/${siteSlug}/` : `/s/${siteSlug}/`;
+    if (!tenant) {
+      return `/s/${siteSlug}/`;
+    }
+    if (tenant.baseHost) {
+      return `${window.location.protocol}//${tenant.username}--${siteSlug}.${tenant.baseHost}/`;
+    }
+    return `/t/${tenant.username}/s/${siteSlug}/`;
   }
 
   function siteFileURL(siteSlug: string, path: string) {
