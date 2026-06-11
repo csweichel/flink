@@ -189,7 +189,7 @@ function App() {
                           Visit
                         </a>
                         <a className="rounded-md border border-stone-300 bg-white px-3 py-1.5 font-medium" href={`/api/sites/${site.slug}/archive`}>
-                          Archive
+                          Download
                         </a>
                         <button className="rounded-md border border-red-200 bg-white px-3 py-1.5 font-medium text-red-700" type="button" onClick={() => deleteSite(site.slug).catch((err: Error) => setStatus(err.message))}>
                           Delete
@@ -222,7 +222,7 @@ function App() {
                   Visit site
                 </a>
                 <a className="rounded-md border border-teal-700 bg-teal-700 px-3 py-2 text-sm font-medium text-white" href={`/api/sites/${selectedSite.slug}/archive`}>
-                  Download archive
+                  Download
                 </a>
               </div>
             ) : null}

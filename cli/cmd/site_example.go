@@ -11,9 +11,16 @@ import (
 )
 
 func siteExampleCommand(serverURL, username, password *string) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "example [slug] [name]",
-		Short: "List or publish a built-in example site",
+		Short: "Publish a built-in example site",
+		Long: `Publish a built-in example site.
+
+Run without arguments to see the available examples. To publish one, pass the
+target site slug and example name.`,
+		Example: `  flink site example
+  flink site example my-chat chat
+  flink site example my-gallery upload`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 || len(args) == 2 {
 				return nil
@@ -22,15 +29,7 @@ func siteExampleCommand(serverURL, username, password *string) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				names := make([]string, 0, len(exampleSites))
-				for name := range exampleSites {
-					names = append(names, name)
-				}
-				sort.Strings(names)
-				for _, name := range names {
-					fmt.Fprintln(cmd.OutOrStdout(), name)
-				}
-				return nil
+				return cmd.Help()
 			}
 
 			slug := args[0]
@@ -56,6 +55,35 @@ func siteExampleCommand(serverURL, username, password *string) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		cmd.Root().HelpFunc()(cmd, args)
+		printAvailableExamples(cmd)
+	})
+	return cmd
+}
+
+func printAvailableExamples(cmd *cobra.Command) {
+	fmt.Fprintln(cmd.OutOrStdout())
+	fmt.Fprintln(cmd.OutOrStdout(), "Available examples:")
+	for _, name := range exampleNames() {
+		fmt.Fprintf(cmd.OutOrStdout(), "  %-8s %s\n", name, exampleDescriptions[name])
+	}
+}
+
+func exampleNames() []string {
+	names := make([]string, 0, len(exampleSites))
+	for name := range exampleSites {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+var exampleDescriptions = map[string]string{
+	"chat":    "Realtime chat over Flink WebSockets",
+	"data":    "Shared counter using Flink JSON storage",
+	"library": "Browser library import plus the AI endpoint",
+	"upload":  "File upload, saved URLs, and image display",
 }
 
 var exampleSites = map[string]string{

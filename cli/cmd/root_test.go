@@ -206,9 +206,19 @@ func TestSiteExampleListsAndPublishesBuiltInExamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"chat", "data", "library", "upload"} {
+	for _, want := range []string{
+		"Publish a built-in example site",
+		"Usage:",
+		"flink site example my-chat chat",
+		"Available examples:",
+		"chat",
+		"Realtime chat over Flink WebSockets",
+		"data",
+		"library",
+		"upload",
+	} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("example list missing %q: %q", want, out)
+			t.Fatalf("example help missing %q: %q", want, out)
 		}
 	}
 
