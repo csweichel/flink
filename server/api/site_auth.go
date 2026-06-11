@@ -40,6 +40,9 @@ func normalizeSiteMeta(meta SiteMeta) SiteMeta {
 		policy = defaultSiteAuthPolicy()
 	}
 	meta.Auth = policy
+	if meta.Auth.Mode != SiteAuthOwner {
+		meta.AgentMessages = false
+	}
 	return meta
 }
 

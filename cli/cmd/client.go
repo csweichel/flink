@@ -89,37 +89,47 @@ func (c *client) doJSON(method, path string, in any, out any) error {
 }
 
 func (c *client) doBytes(method, path string, body []byte, contentType string, out any) error {
-	req, err := http.NewRequest(method, c.baseURL+path, bytes.NewReader(body))
+	b, _, err := c.doRaw(method, path, bytes.NewReader(body), contentType, "application/json")
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Accept", "application/json")
+	if out != nil {
+		return json.Unmarshal(b, out)
+	}
+	return nil
+}
+
+func (c *client) doRaw(method, path string, body io.Reader, contentType, accept string) ([]byte, string, error) {
+	req, err := http.NewRequest(method, c.baseURL+path, body)
+	if err != nil {
+		return nil, "", err
+	}
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
 	req.SetBasicAuth(c.username, c.password)
 	res, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 	defer res.Body.Close()
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		var e struct {
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(b, &e) == nil && e.Error != "" {
-			return fmt.Errorf("%s", e.Error)
+			return nil, "", fmt.Errorf("%s", e.Error)
 		}
-		return fmt.Errorf("request failed: %s", res.Status)
+		return nil, "", fmt.Errorf("request failed: %s", res.Status)
 	}
-	if out != nil {
-		return json.Unmarshal(b, out)
-	}
-	return nil
+	return b, res.Header.Get("Content-Type"), nil
 }
 
 func (c *client) siteURL(slug string) string {

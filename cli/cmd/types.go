@@ -6,6 +6,7 @@ type siteMeta struct {
 	Slug              string         `json:"slug"`
 	Title             string         `json:"title"`
 	Auth              siteAuthPolicy `json:"auth"`
+	AgentMessages     bool           `json:"agentMessages,omitempty"`
 	CreatedAt         time.Time      `json:"createdAt"`
 	UpdatedAt         time.Time      `json:"updatedAt"`
 	CreatedBy         string         `json:"createdBy,omitempty"`
@@ -29,6 +30,11 @@ type siteFileInfo struct {
 	Size int    `json:"size"`
 }
 
+type siteFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
 type siteDetails struct {
 	Site    siteMeta       `json:"site"`
 	Files   []siteFileInfo `json:"files"`
@@ -36,10 +42,58 @@ type siteDetails struct {
 	Uploads []uploadInfo   `json:"uploads"`
 }
 
+type uploadResult struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
 type uploadInfo struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
 	Size int    `json:"size"`
+}
+
+type aiRequest struct {
+	Prompt          string `json:"prompt"`
+	Instructions    string `json:"instructions,omitempty"`
+	Model           string `json:"model,omitempty"`
+	MaxOutputTokens int    `json:"maxOutputTokens,omitempty"`
+}
+
+type aiResponse struct {
+	Text       string `json:"text"`
+	Model      string `json:"model,omitempty"`
+	Configured bool   `json:"configured"`
+}
+
+type agentStatus struct {
+	Enabled   bool `json:"enabled"`
+	Listening bool `json:"listening"`
+	Pending   int  `json:"pending"`
+}
+
+type agentMessage struct {
+	ID         string           `json:"id"`
+	Tenant     string           `json:"tenant"`
+	Site       string           `json:"site"`
+	Text       string           `json:"text"`
+	Sender     string           `json:"sender,omitempty"`
+	Screenshot *agentScreenshot `json:"screenshot,omitempty"`
+	CreatedAt  time.Time        `json:"createdAt"`
+}
+
+type agentScreenshot struct {
+	Name    string `json:"name,omitempty"`
+	Type    string `json:"type,omitempty"`
+	DataURL string `json:"dataUrl,omitempty"`
+}
+
+type agentResponse struct {
+	ID        string    `json:"id"`
+	Tenant    string    `json:"tenant"`
+	Site      string    `json:"site"`
+	Text      string    `json:"text"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 type publishFileInfo struct {

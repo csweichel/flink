@@ -51,6 +51,8 @@ func NewRootCommandWithOptions(options Options) *cobra.Command {
 	root.AddCommand(rollbackCommand(ctx))
 	root.AddCommand(snapshotCommand(ctx))
 	root.AddCommand(authCommand(ctx))
+	root.AddCommand(agentCommand(ctx))
+	root.AddCommand(apiCommand(ctx))
 	root.AddCommand(configCommand(ctx))
 
 	return root

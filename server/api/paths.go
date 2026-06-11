@@ -67,6 +67,14 @@ func siteUploadsCollection(tenant, slug string) string {
 	return "tenants/" + tenant + "/sites/" + slug + "/uploads"
 }
 
+func siteAgentMessagesCollection(tenant, slug string) string {
+	return "tenants/" + tenant + "/sites/" + slug + "/agent-messages"
+}
+
+func siteAgentResponsesCollection(tenant, slug string) string {
+	return "tenants/" + tenant + "/sites/" + slug + "/agent-responses"
+}
+
 func sitePublishesCollection(tenant, slug string) string {
 	return "tenants/" + tenant + "/sites/" + slug + "/publishes"
 }

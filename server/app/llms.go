@@ -16,13 +16,14 @@ var llmsTemplates embed.FS
 var llmsTemplate = template.Must(template.ParseFS(llmsTemplates, "llms.txt.tmpl"))
 
 type flinkDiscovery struct {
-	Type              string   `json:"type"`
-	Server            string   `json:"server"`
-	AgentInstructions string   `json:"agent_instructions"`
-	RequiredEnv       []string `json:"required_env"`
-	CLI               string   `json:"cli"`
-	SiteURLTemplate   string   `json:"site_url_template"`
-	Commands          []string `json:"commands"`
+	Type              string                   `json:"type"`
+	Server            string                   `json:"server"`
+	AgentInstructions string                   `json:"agent_instructions"`
+	RequiredEnv       []string                 `json:"required_env"`
+	CLI               string                   `json:"cli"`
+	SiteURLTemplate   string                   `json:"site_url_template"`
+	Commands          []string                 `json:"commands"`
+	APIEndpoints      []apiEndpointDescription `json:"api_endpoints"`
 
 	CLIBase        string `json:"-"`
 	BaseHost       string `json:"-"`
@@ -31,6 +32,13 @@ type flinkDiscovery struct {
 	IndexURL       string `json:"-"`
 	AssetURL       string `json:"-"`
 	DocsURL        string `json:"-"`
+}
+
+type apiEndpointDescription struct {
+	Name   string `json:"name"`
+	Method string `json:"method"`
+	URL    string `json:"url"`
+	Auth   string `json:"auth"`
 }
 
 func (a *App) handleLLMSTXT(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +105,28 @@ func (a *App) discovery(r *http.Request) flinkDiscovery {
 			"flink publish ./dist --site <site>",
 			"flink auth <site> none",
 			"flink inspect <site>",
+			"flink api data get <site> <key>",
+			"flink agent enable <site>",
+			"flink agent listen <site>",
+			"flink agent respond <site> <message>",
+		},
+		APIEndpoints: []apiEndpointDescription{
+			{Name: "storage_get", Method: "GET", URL: origin + "/api/sites/{site}/data/{key}", Auth: "HTTP Basic Auth with tenant username and password"},
+			{Name: "storage_set", Method: "PUT", URL: origin + "/api/sites/{site}/data/{key}", Auth: "HTTP Basic Auth with tenant username and password"},
+			{Name: "storage_all", Method: "GET", URL: origin + "/api/sites/{site}/data/", Auth: "HTTP Basic Auth with tenant username and password"},
+			{Name: "files", Method: "GET|PUT|DELETE", URL: origin + "/api/sites/{site}/files?path={path}", Auth: "HTTP Basic Auth with tenant username and password"},
+			{Name: "uploads", Method: "GET|POST|DELETE", URL: origin + "/api/sites/{site}/uploads", Auth: "HTTP Basic Auth with tenant username and password"},
+			{Name: "ai", Method: "POST", URL: origin + "/api/sites/{site}/ai", Auth: "HTTP Basic Auth with tenant username and password"},
+			{Name: "browser_sdk_storage", Method: "GET|PUT|DELETE", URL: origin + "/api/public/t/{tenant}/s/{site}/data/{key}", Auth: "site auth policy: anonymous for mode none, otherwise tenant session cookie or HTTP Basic Auth"},
+			{Name: "browser_sdk_files", Method: "GET|PUT|DELETE", URL: origin + "/api/public/t/{tenant}/s/{site}/files?path={path}", Auth: "owning tenant only, with tenant session cookie or HTTP Basic Auth"},
+			{Name: "browser_sdk_uploads", Method: "GET|POST|DELETE", URL: origin + "/api/public/t/{tenant}/s/{site}/uploads", Auth: "site auth policy: anonymous for mode none, otherwise tenant session cookie or HTTP Basic Auth"},
+			{Name: "browser_sdk_ai", Method: "POST", URL: origin + "/api/public/t/{tenant}/s/{site}/ai", Auth: "site auth policy: anonymous for mode none, otherwise tenant session cookie or HTTP Basic Auth"},
+			{Name: "realtime", Method: "WEBSOCKET", URL: strings.Replace(origin, "http", "ws", 1) + "/ws/{tenant}/{site}/{room}", Auth: "site auth policy: anonymous for mode none, otherwise tenant session cookie or HTTP Basic Auth"},
+			{Name: "agent_status", Method: "GET|PUT", URL: origin + "/api/sites/{site}/agent", Auth: "HTTP Basic Auth with owning tenant username and password; site access must be owner to enable"},
+			{Name: "agent_messages", Method: "GET|DELETE", URL: origin + "/api/sites/{site}/agent/messages", Auth: "HTTP Basic Auth with owning tenant username and password"},
+			{Name: "agent_responses", Method: "GET|POST", URL: origin + "/api/sites/{site}/agent/responses", Auth: "HTTP Basic Auth with owning tenant username and password"},
+			{Name: "browser_agent_message", Method: "POST", URL: origin + "/api/public/t/{tenant}/s/{site}/agent/messages", Auth: "owning tenant session cookie or HTTP Basic Auth; only when site access is owner and agent messages are enabled"},
+			{Name: "browser_agent_responses", Method: "GET", URL: origin + "/api/public/t/{tenant}/s/{site}/agent/responses", Auth: "owning tenant session cookie or HTTP Basic Auth; only when site access is owner and agent messages are enabled"},
 		},
 		CLIBase:       cliBase,
 		BaseHost:      a.baseHost,

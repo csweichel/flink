@@ -502,6 +502,10 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 		"./flink auth my-site none",
 		"./flink auth my-site tenants",
 		"./flink auth my-site tenants <tenant>...",
+		"Never put `FLINK_PASSWORD`, tenant passwords, Basic Auth headers, API credentials, or other secrets into published browser files.",
+		"Existing site update: inspect the site, read existing files if needed, make the requested change, publish back to the same site, and verify the live URL.",
+		"`flink.get(key)`, `flink.set(key, value)`, `flink.all()`, `flink.del(key)` for JSON storage.",
+		"Agent mode is a goal-based listener loop implemented with a blocking listener, not with polling.",
 	} {
 		if !bytes.Contains(res.Body.Bytes(), []byte(want)) {
 			t.Fatalf("llms.txt missing %q:\n%s", want, res.Body.String())
@@ -541,12 +545,21 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 		CLI               string   `json:"cli"`
 		SiteURLTemplate   string   `json:"site_url_template"`
 		Commands          []string `json:"commands"`
+		APIEndpoints      []struct {
+			Name   string `json:"name"`
+			Method string `json:"method"`
+			URL    string `json:"url"`
+			Auth   string `json:"auth"`
+		} `json:"api_endpoints"`
 	}
 	if err := json.Unmarshal(res.Body.Bytes(), &discovery); err != nil {
 		t.Fatal(err)
 	}
-	if discovery.Type != "flink" || discovery.SiteURLTemplate != "https://{tenant}--{site}.quick.internal/" || discovery.AgentInstructions == "" || len(discovery.RequiredEnv) != 2 || len(discovery.Commands) != 3 {
+	if discovery.Type != "flink" || discovery.SiteURLTemplate != "https://{tenant}--{site}.quick.internal/" || discovery.AgentInstructions == "" || len(discovery.RequiredEnv) != 2 || len(discovery.Commands) != 7 {
 		t.Fatalf("unexpected discovery JSON: %#v", discovery)
+	}
+	if len(discovery.APIEndpoints) == 0 || discovery.APIEndpoints[0].URL != "http://example.com/api/sites/{site}/data/{key}" || !strings.Contains(discovery.APIEndpoints[0].Auth, "HTTP Basic Auth") {
+		t.Fatalf("discovery JSON missing API endpoint descriptions: %#v", discovery.APIEndpoints)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -759,6 +772,98 @@ func TestAIEndpointCallsOpenAICompatibleResponsesAPI(t *testing.T) {
 	}
 	if out["text"] != "hello from ai" || out["model"] != "mock-model" || out["configured"] != true {
 		t.Fatalf("unexpected AI response: %#v", out)
+	}
+}
+
+func TestAgentMessagesOwnerOnlyWidgetStoreForwardAndRealtime(t *testing.T) {
+	a := testApp(t)
+	postJSON(t, a, "/api/sites", map[string]string{"slug": "agent"})
+	putJSON(t, a, "/api/sites/agent/files?path=index.html", map[string]string{"content": "<!doctype html><body><h1>agent</h1></body>"})
+
+	res := request(t, a, http.MethodGet, "/t/acme/s/agent/", nil, "")
+	if res.Code != http.StatusOK || bytes.Contains(res.Body.Bytes(), []byte("flink-agent-widget")) {
+		t.Fatalf("agent widget should not render before enable: %d %s", res.Code, res.Body.String())
+	}
+
+	putJSON(t, a, "/api/sites/agent/agent", map[string]bool{"enabled": true})
+	res = request(t, a, http.MethodGet, "/t/acme/s/agent/", nil, "")
+	for _, want := range []string{"flink-agent-widget", "Agent offline", "location.reload()", "Include screenshot", "getDisplayMedia", "/responses", "data-collapsed", "flink-agent-response"} {
+		if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(want)) {
+			t.Fatalf("agent widget missing %q after enable: %d %s", want, res.Code, res.Body.String())
+		}
+	}
+
+	res = request(t, a, http.MethodPost, "/api/sites/agent/agent/responses", bytes.NewReader([]byte(`{"text":"I republished the page."}`)), "application/json")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("I republished the page.")) {
+		t.Fatalf("agent response post failed: %d %s", res.Code, res.Body.String())
+	}
+	res = request(t, a, http.MethodGet, "/api/public/t/acme/s/agent/agent/responses", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("I republished the page.")) {
+		t.Fatalf("agent response should be visible to widget: %d %s", res.Code, res.Body.String())
+	}
+	res = request(t, a, http.MethodPost, "/api/sites/agent/agent/responses", bytes.NewReader([]byte(`{"text":"Latest response only."}`)), "application/json")
+	if res.Code != http.StatusOK {
+		t.Fatalf("second agent response post failed: %d %s", res.Code, res.Body.String())
+	}
+	res = request(t, a, http.MethodGet, "/api/public/t/acme/s/agent/agent/responses", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("Latest response only.")) || bytes.Contains(res.Body.Bytes(), []byte("I republished the page.")) {
+		t.Fatalf("agent responses should only keep latest: %d %s", res.Code, res.Body.String())
+	}
+
+	res = request(t, a, http.MethodGet, "/t/acme/s/agent/", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("flink-agent-widget")) {
+		t.Fatalf("agent widget missing after enable: %d %s", res.Code, res.Body.String())
+	}
+
+	res = request(t, a, http.MethodGet, "/api/public/t/acme/s/agent/agent", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"enabled":true`)) || !bytes.Contains(res.Body.Bytes(), []byte(`"listening":false`)) {
+		t.Fatalf("unexpected agent status without listener: %d %s", res.Code, res.Body.String())
+	}
+
+	res = request(t, a, http.MethodPost, "/api/public/t/acme/s/agent/agent/messages", bytes.NewReader([]byte(`{"text":"please update the heading","screenshot":{"name":"page.png","type":"image/png","dataUrl":"data:image/png;base64,aGVsbG8="}}`)), "application/json")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("please update the heading")) {
+		t.Fatalf("agent message post failed: %d %s", res.Code, res.Body.String())
+	}
+	res = request(t, a, http.MethodGet, "/api/sites/agent/agent/messages", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("please update the heading")) || !bytes.Contains(res.Body.Bytes(), []byte("data:image/png;base64,aGVsbG8=")) {
+		t.Fatalf("stored agent message missing: %d %s", res.Code, res.Body.String())
+	}
+
+	srv := httptest.NewServer(a)
+	defer srv.Close()
+	wsURL := "ws" + srv.URL[len("http"):] + "/ws/agent/__flink_agent"
+	header := http.Header{"Authorization": []string{basicAuth(testTenant, testPassword)}}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	res = request(t, a, http.MethodGet, "/api/public/t/acme/s/agent/agent", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"listening":true`)) {
+		t.Fatalf("status should show websocket listener: %d %s", res.Code, res.Body.String())
+	}
+	res = request(t, a, http.MethodPost, "/api/public/t/acme/s/agent/agent/messages", bytes.NewReader([]byte(`{"text":"live message"}`)), "application/json")
+	if res.Code != http.StatusOK {
+		t.Fatalf("live agent message post failed: %d %s", res.Code, res.Body.String())
+	}
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(msg, []byte("live message")) {
+		t.Fatalf("websocket did not receive agent message: %s", msg)
+	}
+
+	putJSON(t, a, "/api/sites/agent/auth", api.SiteAuthPolicy{Mode: api.SiteAuthNone})
+	res = request(t, a, http.MethodGet, "/api/sites/agent/agent", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"enabled":false`)) {
+		t.Fatalf("agent mode should disable when auth is not owner: %d %s", res.Code, res.Body.String())
+	}
+	res = request(t, a, http.MethodPut, "/api/sites/agent/agent", bytes.NewReader([]byte(`{"enabled":true}`)), "application/json")
+	if res.Code != http.StatusBadRequest || !bytes.Contains(res.Body.Bytes(), []byte("only available")) {
+		t.Fatalf("agent enable should fail for non-owner access: %d %s", res.Code, res.Body.String())
 	}
 }
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"sync"
 
@@ -31,6 +32,20 @@ func (h *Hub) ServeRoom(w http.ResponseWriter, r *http.Request, room string) {
 		}
 		h.broadcast(room, mt, msg, conn)
 	}
+}
+
+func (h *Hub) Count(room string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.rooms[room])
+}
+
+func (h *Hub) SendJSON(room string, value any) {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	h.broadcast(room, websocket.TextMessage, b, nil)
 }
 
 func (h *Hub) join(room string, conn *websocket.Conn) {

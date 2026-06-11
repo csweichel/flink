@@ -14,6 +14,8 @@ Use Flink when you want to tell your coding agent: "publish this prototype to my
 - [Publish With The User CLI](#publish-with-the-user-cli)
 - [Guidance For AI Agents Building Sites](#guidance-for-ai-agents-building-sites)
 - [Browser APIs For Hosted Sites](#browser-apis-for-hosted-sites)
+- [HTTP And CLI Site APIs](#http-and-cli-site-apis)
+- [Agent Message Mode](#agent-message-mode)
 - [Host A Flink Server](#host-a-flink-server)
   - [Docker](#docker)
   - [User Systemd](#user-systemd)
@@ -227,6 +229,88 @@ ai        optional server-side LLM endpoint
 ```
 
 If AI is not configured on the server, AI calls return a stable "not configured" response instead of failing unpredictably.
+
+## HTTP And CLI Site APIs
+
+Agents and scripts can use the same site API surface without running browser code. Authenticate with tenant credentials:
+
+```sh
+export FLINK_SERVER=https://flink.internal
+export FLINK_TENANT=demo
+export FLINK_PASSWORD=flink
+```
+
+The CLI wraps the authenticated owner API:
+
+```sh
+bin/flink api data set hello note '{"text":"saved"}'
+bin/flink api data get hello note
+bin/flink api data all hello
+bin/flink api files list hello
+bin/flink api files read hello index.html
+bin/flink api files write hello index.html ./index.html
+bin/flink api uploads upload hello ./image.png
+bin/flink api uploads list hello
+bin/flink api uploads fetch hello /uploads/demo/hello/image.png
+bin/flink api ai hello "Give me a prototype idea"
+```
+
+Use `--json` when a command has a human-friendly default, such as `files read` or `api ai`.
+
+Raw HTTP uses HTTP Basic Auth with the tenant username and password:
+
+```sh
+curl -u "$FLINK_TENANT:$FLINK_PASSWORD" \
+  "$FLINK_SERVER/api/sites/hello/data/note"
+
+curl -u "$FLINK_TENANT:$FLINK_PASSWORD" \
+  -H 'content-type: application/json' \
+  -X PUT --data '{"text":"saved"}' \
+  "$FLINK_SERVER/api/sites/hello/data/note"
+
+curl -u "$FLINK_TENANT:$FLINK_PASSWORD" \
+  "$FLINK_SERVER/api/sites/hello/files?path=index.html"
+
+curl -u "$FLINK_TENANT:$FLINK_PASSWORD" \
+  -F file=@./image.png \
+  "$FLINK_SERVER/api/sites/hello/uploads"
+
+curl -u "$FLINK_TENANT:$FLINK_PASSWORD" \
+  -H 'content-type: application/json' \
+  -X POST --data '{"prompt":"Give me a prototype idea"}' \
+  "$FLINK_SERVER/api/sites/hello/ai"
+```
+
+The browser-equivalent public API is also exposed at `/api/public/t/<tenant>/s/<site>/...`, for example `/api/public/t/demo/s/hello/data/note`. Storage, uploads, AI, and realtime follow the site's auth policy: `owner` requires the owning tenant, `none` allows anonymous callers, and `tenants` requires an approved tenant session cookie or HTTP Basic Auth. Hosted file API reads and writes are owner-only. Realtime rooms use `ws://<server>/ws/<tenant>/<site>/<room>` or `wss://...` behind HTTPS with the same site auth policy.
+
+Discovery endpoints are public:
+
+```text
+/llms.txt
+/_flink/agent-instructions
+/.well-known/flink.json
+```
+
+## Agent Message Mode
+
+Owner-only sites can show a small message widget that lets the signed-in owner send instructions to an agent. The mode is intentionally limited to `owner` access. Enabling it fails for `none` or `tenants` sites, and changing a site away from `owner` disables the widget.
+
+```sh
+bin/flink auth hello owner
+bin/flink agent enable hello
+bin/flink agent status hello
+bin/flink agent respond hello "I updated the page and restarted the listener."
+```
+
+An agent starts one blocking listener and leaves it running:
+
+```sh
+bin/flink agent listen hello
+```
+
+If messages were already sent, `listen` prints them immediately. It then connects to the site's realtime room and blocks, printing each new message as it arrives. When a message arrives, the CLI acknowledges it, prints the message, saves any included screenshot under `/tmp/flink-agent-screenshots`, shows the site URL, and tells the agent to respond with `flink agent respond hello <message>` and update the site with `flink publish <path> --site hello` when needed. Keep the listener process attached while using another command to publish or respond; it is the blocking wake-up point for future user requests. Use `--once` only for scripts that deliberately want to handle a single message and exit.
+
+The widget shows whether an agent is currently listening. Users can still send while no agent is connected; messages are stored and delivered to the next listener. The widget can collapse into a small bubble, can attach a screenshot of the current browser tab or window through the browser's screen-capture permission flow, and displays stored agent responses.
 
 ## Host A Flink Server
 

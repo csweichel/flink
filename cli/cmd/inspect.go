@@ -40,6 +40,7 @@ func inspectCommand(ctx *commandContext) *cobra.Command {
 				}},
 				outputSection{Title: "Access", Rows: []outputRow{
 					row("Mode", formatSiteAuthPolicy(details.Site.Auth)),
+					row("Agent messages", details.Site.AgentMessages),
 				}},
 				outputSection{Title: "Resources", Rows: []outputRow{
 					row("Files", len(details.Files)),

@@ -2,11 +2,21 @@
 
 You are looking at a Flink server. Flink is a simple application server built for agents to publish prototype apps and single-page apps as live static websites with built-in browser APIs for JSON storage, uploads, realtime rooms, and optional AI calls.
 
-If a user asks you to publish or deploy a prototype app to this server, do the work yourself with the Flink CLI. Do not ask the user to clone this repository, build Flink, choose infrastructure, or set up a separate backend.
-{{if not .DomainHosting}}
+## Operating rules
 
+If a user asks you to publish or deploy a prototype app to this server, do the work yourself with the Flink CLI. Do not ask the user to clone this repository, build Flink, choose infrastructure, or set up a separate backend.
+
+- Prefer Flink's built-in storage, uploads, realtime rooms, and AI endpoint over inventing a custom backend.
+- Keep the first published version usable, then iterate by publishing again to the same site.
+- Keep sites owner-only unless the user explicitly asks to share them.
+- Never put `FLINK_PASSWORD`, tenant passwords, Basic Auth headers, API credentials, or other secrets into published browser files.
+- If tenant credentials are missing, ask the user for them. Do not guess credentials.
+
+{{if not .DomainHosting}}
 This Flink server does not have domain-based hosting configured, so use path-based tenant URLs.
 {{end}}
+
+## Connection and authentication
 
 Inputs you need:
 
@@ -16,16 +26,7 @@ Inputs you need:
 - site name: a lowercase slug such as my-site
 - files to publish: usually ./dist for a built app, or ./index.html for a single-file prototype
 
-Use this exact URL pattern for published websites:
-{{.SiteURLPattern}}
-{{if .DomainHosting}}
-
-For example, tenant demo and site my-site will be available at:
-
-https://demo--my-site.{{.BaseHost}}/
-{{end}}
-
-Download the Flink CLI from GitHub Releases. Do not ask the user to clone the repository or build the CLI from source.
+If a `flink` CLI is already available, use it. Otherwise download the Flink CLI from GitHub Releases. Do not ask the user to clone the repository or build the CLI from source.
 
 - Linux amd64: {{.CLIBase}}flink_linux_amd64.tar.gz
 - Linux arm64: {{.CLIBase}}flink_linux_arm64.tar.gz
@@ -41,17 +42,53 @@ export FLINK_SERVER={{.Server}}
 export FLINK_TENANT=<tenant>
 export FLINK_PASSWORD=<password>
 
-Use a Flink template early when starting from scratch. Templates create a usable static prototype with the browser SDK already wired in, which is faster and safer than beginning from an empty file:
+## Site URLs
 
-./flink init todo ./my-site --site my-site
+Use this exact URL pattern for published websites:
+{{.SiteURLPattern}}
+{{if .DomainHosting}}
+
+For example, tenant demo and site my-site will be available at:
+
+https://demo--my-site.{{.BaseHost}}/
+{{end}}
+
+For multi-file websites, publish a directory. Paths are preserved under the same {{if .DomainHosting}}domain{{else}}site base{{end}}:
+
+- ./dist/index.html -> {{.IndexURL}}
+- ./dist/assets/app.css -> {{.AssetURL}}
+- ./dist/docs/index.html -> {{.DocsURL}}
+
+## Choose the right workflow
+
+Use this decision flow before writing code:
+
+- Existing site update: inspect the site, read existing files if needed, make the requested change, publish back to the same site, and verify the live URL.
+- New prototype from scratch: start with a Flink template unless the user gave you complete static files.
+- Hosted app needs state, files, collaboration, or AI: use `/flink.js` in browser code instead of creating a backend.
+- Agent needs to inspect or mutate site state without a browser: use `flink api ...` or the raw owner HTTP API with Basic Auth.
+- User wants to message an agent from the page: use owner-only agent message mode and keep one blocking listener attached.
+
+## Publish or update a site
 
 Deployment flow:
 
 1. Build the app into static files if it has a build step.
 2. If starting from scratch, create a template with `flink init <template>`.
-3. Publish either the build directory or the single HTML file with `flink publish`.
-4. Change site access with `flink auth` if the user wants to share it.
-5. Use the URL printed by the CLI to verify the app.
+3. For an existing site, inspect it first and preserve unrelated content.
+4. Publish either the build directory or the single HTML file with `flink publish`.
+5. Change site access with `flink auth` only when the user asks for a different sharing policy.
+6. Use the URL printed by the CLI to verify the app.
+
+Inspect an existing site:
+
+./flink inspect my-site
+./flink api files list my-site
+./flink api files read my-site index.html
+
+Use a Flink template early when starting from scratch. Templates create a usable static prototype with the browser SDK already wired in, which is faster and safer than beginning from an empty file:
+
+./flink init todo ./my-site --site my-site
 
 Publish a built app or static directory:
 
@@ -61,7 +98,13 @@ Publish a single-page HTML prototype:
 
 ./flink publish ./index.html --site my-site
 
-Site access uses this server's default site auth mode when created. To make a site visible without signing in, run:
+After publishing, open or fetch the printed site URL and check that the page loads.
+
+## Site access policy
+
+New sites use this server's default site auth mode. Keep `owner` access unless the user explicitly asks to share the site.
+
+To make a site visible without signing in, run:
 
 ./flink auth my-site none
 
@@ -73,14 +116,86 @@ To restrict to specific tenants, run:
 
 ./flink auth my-site tenants <tenant>...
 
-For multi-file websites, publish a directory. Paths are preserved under the same {{if .DomainHosting}}domain{{else}}site base{{end}}:
+Access policy effects:
 
-- ./dist/index.html -> {{.IndexURL}}
-- ./dist/assets/app.css -> {{.AssetURL}}
-- ./dist/docs/index.html -> {{.DocsURL}}
+- `owner`: only the publishing tenant can view and use browser APIs.
+- `none`: anonymous users can view the site and use browser APIs allowed by the site.
+- `tenants`: approved tenants, or only listed tenants, can view and use browser APIs.
+
+## Browser SDK for hosted sites
 
 Hosted sites can use Flink backend APIs by importing:
 
 <script src="/flink.js"></script>
 
+Do not include tenant passwords or Basic Auth credentials in browser code. The browser SDK uses the hosted site's auth policy and the viewer's session.
+
+Useful browser APIs:
+
+- `flink.get(key)`, `flink.set(key, value)`, `flink.all()`, `flink.del(key)` for JSON storage.
+- `flink.upload(file)` plus `flink.uploads.list()`, `flink.uploads.text(upload)`, `flink.uploads.json(upload)`, `flink.uploads.blob(upload)`, and `flink.uploads.url(upload)` for uploaded files.
+- `flink.room(name, onMessage)` for realtime WebSocket rooms; call `room.send(value)` to broadcast JSON or text.
+- `flink.ai(promptOrRequest)` for optional server-side AI.
+- `flink.files.*` exists for owner-only file management. Do not use it in public visitor workflows.
+
+Minimal hosted-site example:
+
+<script src="/flink.js"></script>
+<script>
+  async function main() {
+    const count = (await flink.get("count").catch(() => 0)) + 1;
+    await flink.set("count", count);
+    document.body.textContent = "Visits: " + count;
+
+    const room = flink.room("main", (message) => console.log("room message", message));
+    room.send({ type: "loaded", count });
+  }
+  main().catch((error) => {
+    document.body.textContent = error.message;
+  });
+</script>
+
 Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend. Keep the first deployed version usable, then iterate by running `./flink publish` again for the same site.
+
+## CLI and HTTP site APIs for agents
+
+Agents can use the same site APIs from the CLI without opening a browser. These commands use HTTP Basic Auth with `FLINK_TENANT` and `FLINK_PASSWORD`. Use `--json` when scripting or when you need machine-readable output.
+
+./flink api data set my-site note '{"text":"saved"}'
+./flink api data get my-site note
+./flink api data all my-site
+./flink api files list my-site
+./flink api files read my-site index.html
+./flink api files write my-site index.html ./index.html
+./flink api uploads upload my-site ./image.png
+./flink api uploads list my-site
+./flink api uploads fetch my-site /uploads/<tenant>/<site>/image.png
+./flink api ai my-site "Give me a prototype idea"
+
+The raw owner API uses the same tenant credentials with HTTP Basic Auth:
+
+curl -u "$FLINK_TENANT:$FLINK_PASSWORD" {{.Server}}/api/sites/my-site/data/note
+curl -u "$FLINK_TENANT:$FLINK_PASSWORD" -H 'content-type: application/json' -X PUT --data '{"text":"saved"}' {{.Server}}/api/sites/my-site/data/note
+
+Browser-equivalent public API routes are also available under `/api/public/t/{tenant}/s/{site}/...`. Storage, uploads, AI, and realtime follow the site's access policy: `owner` requires the owning tenant, `none` allows anonymous access, and `tenants` requires an approved tenant session or HTTP Basic Auth. Hosted file writes and reads through the API are owner-only.
+
+## Agent message mode
+
+Owner-only sites can enable an agent message widget. This mode is only available while the site's access policy is `owner`.
+
+./flink agent enable my-site
+./flink agent status my-site
+./flink agent listen my-site
+./flink agent respond my-site "I updated the page and restarted the listener."
+
+When `flink agent listen my-site` receives a message, it prints the user's message, instructions to respond with `flink agent respond`, and instructions to update the site with `flink publish`. Messages are stored until a listener receives and acknowledges them, so users can send a message even when no agent is currently listening. If the user includes a screenshot, the CLI writes it to `/tmp/flink-agent-screenshots`. The widget is collapsible, shows whether an agent listener is connected, can attach a browser-captured screenshot with user permission, and shows agent responses.
+
+Agent mode is a goal-based listener loop implemented with a blocking listener, not with polling. When an agent is asked to listen to a site, it should keep that listening goal active: run `flink agent listen my-site` once and leave that command attached. The command prints any stored messages, then blocks on the realtime room and prints each new message as it arrives. Handle each message and any screenshot, update and republish the site when the user asks for a change, and send a concise `flink agent respond my-site "<message>"` response for the widget from another command while the listener stays running. After handling a message, do not mark the listening goal complete unless the user explicitly ends it; the listener should still be connected and waiting for the next request. If the listener exits or the server restarts, reconnect by running `flink agent listen my-site` again. Use `flink agent listen my-site --once` only for scripts that deliberately want to handle one message and exit. The expected steady state is that an agent listener is connected and waiting without burning tokens or polling when there is nothing to do.
+
+## Discovery endpoints
+
+Use these public endpoints to rediscover this guidance and the machine-readable server description:
+
+- /llms.txt
+- /_flink/agent-instructions
+- /.well-known/flink.json

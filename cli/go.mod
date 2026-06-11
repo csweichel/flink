@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	github.com/csweichel/flink/shared v0.0.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/spf13/cobra v1.8.1
 )
 

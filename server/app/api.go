@@ -82,6 +82,93 @@ func (a *App) handleSetSiteAuth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, meta.Auth, nil)
 }
 
+func (a *App) handleGetSiteAgent(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	status, err := a.agentStatus(tenant.Username, slug)
+	writeJSON(w, status, err)
+}
+
+func (a *App) handleSetSiteAgent(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	meta, err := a.store.UpdateSiteAgentMessages(tenant.Username, slug, in.Enabled)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	status, err := a.agentStatus(tenant.Username, slug)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	status.Enabled = meta.AgentMessages
+	writeJSON(w, status, nil)
+}
+
+func (a *App) handleListAgentMessages(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	messages, err := a.store.ListAgentMessages(tenant.Username, slug)
+	writeJSON(w, messages, err)
+}
+
+func (a *App) handleDeleteAgentMessage(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, map[string]bool{"deleted": true}, a.store.DeleteAgentMessage(tenant.Username, slug, r.PathValue("id")))
+}
+
+func (a *App) handleListAgentResponses(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	responses, err := a.store.ListAgentResponses(tenant.Username, slug)
+	writeJSON(w, responses, err)
+}
+
+func (a *App) handleCreateAgentResponse(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	response, err := a.store.CreateAgentResponse(tenant.Username, slug, in.Text)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, response, nil)
+}
+
 func (a *App) handleListPublishes(w http.ResponseWriter, r *http.Request) {
 	tenant := tenantFromContext(r.Context())
 	slug, ok := validPathSlug(w, r)
@@ -218,6 +305,79 @@ func (a *App) handlePublicTenantArchive(w http.ResponseWriter, r *http.Request) 
 
 func (a *App) handlePublicTenantAI(w http.ResponseWriter, r *http.Request) {
 	a.handlePublicAI(w, r)
+}
+
+func (a *App) handlePublicAgentStatus(w http.ResponseWriter, r *http.Request) {
+	tenant, slug, ok := a.authorizedPublicSite(w, r)
+	if !ok {
+		return
+	}
+	status, err := a.agentStatus(tenant, slug)
+	writeJSON(w, status, err)
+}
+
+func (a *App) handlePublicAgentMessage(w http.ResponseWriter, r *http.Request) {
+	tenant, slug, ok := a.authorizedPublicSite(w, r)
+	if !ok {
+		return
+	}
+	authTenant, _ := a.authenticate(r)
+	var in struct {
+		Text       string          `json:"text"`
+		Screenshot *api.Screenshot `json:"screenshot,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	msg, err := a.store.CreateAgentMessage(tenant, slug, authTenant.Username, in.Text, in.Screenshot)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	a.hub.SendJSON(agentRoom(tenant, slug), msg)
+	writeJSON(w, msg, nil)
+}
+
+func (a *App) handlePublicTenantAgentStatus(w http.ResponseWriter, r *http.Request) {
+	a.handlePublicAgentStatus(w, r)
+}
+
+func (a *App) handlePublicTenantAgentMessage(w http.ResponseWriter, r *http.Request) {
+	a.handlePublicAgentMessage(w, r)
+}
+
+func (a *App) handlePublicAgentResponses(w http.ResponseWriter, r *http.Request) {
+	tenant, slug, ok := a.authorizedPublicSite(w, r)
+	if !ok {
+		return
+	}
+	responses, err := a.store.ListAgentResponses(tenant, slug)
+	writeJSON(w, responses, err)
+}
+
+func (a *App) handlePublicTenantAgentResponses(w http.ResponseWriter, r *http.Request) {
+	a.handlePublicAgentResponses(w, r)
+}
+
+func (a *App) agentStatus(tenant, slug string) (api.AgentStatus, error) {
+	meta, err := a.store.ReadMeta(tenant, slug)
+	if err != nil {
+		return api.AgentStatus{}, err
+	}
+	messages, err := a.store.ListAgentMessages(tenant, slug)
+	if err != nil {
+		return api.AgentStatus{}, err
+	}
+	return api.AgentStatus{
+		Enabled:   meta.AgentMessages && meta.Auth.Mode == api.SiteAuthOwner,
+		Listening: a.hub.Count(agentRoom(tenant, slug)) > 0,
+		Pending:   len(messages),
+	}, nil
+}
+
+func agentRoom(tenant, slug string) string {
+	return tenant + "/" + slug + "/__flink_agent"
 }
 
 func validPathSlug(w http.ResponseWriter, r *http.Request) (string, bool) {

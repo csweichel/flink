@@ -36,6 +36,7 @@ type SiteMeta struct {
 	Slug              string         `json:"slug"`
 	Title             string         `json:"title"`
 	Auth              SiteAuthPolicy `json:"auth"`
+	AgentMessages     bool           `json:"agentMessages,omitempty"`
 	CreatedAt         time.Time      `json:"createdAt"`
 	UpdatedAt         time.Time      `json:"updatedAt"`
 	CreatedBy         string         `json:"createdBy,omitempty"`
@@ -97,6 +98,36 @@ type SiteDetails struct {
 	Files   []SiteFileInfo `json:"files"`
 	Data    map[string]any `json:"data"`
 	Uploads []UploadInfo   `json:"uploads"`
+}
+
+type AgentMessage struct {
+	ID         string      `json:"id"`
+	Tenant     string      `json:"tenant"`
+	Site       string      `json:"site"`
+	Text       string      `json:"text"`
+	Sender     string      `json:"sender,omitempty"`
+	Screenshot *Screenshot `json:"screenshot,omitempty"`
+	CreatedAt  time.Time   `json:"createdAt"`
+}
+
+type Screenshot struct {
+	Name    string `json:"name,omitempty"`
+	Type    string `json:"type,omitempty"`
+	DataURL string `json:"dataUrl,omitempty"`
+}
+
+type AgentResponse struct {
+	ID        string    `json:"id"`
+	Tenant    string    `json:"tenant"`
+	Site      string    `json:"site"`
+	Text      string    `json:"text"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type AgentStatus struct {
+	Enabled   bool `json:"enabled"`
+	Listening bool `json:"listening"`
+	Pending   int  `json:"pending"`
 }
 
 type PublishFileInfo struct {
@@ -364,6 +395,7 @@ func (s *Store) CreateSite(tenant, slug, title string) (SiteMeta, error) {
 		meta.LastPublishedFrom = existing.LastPublishedFrom
 		meta.LastGitCommit = existing.LastGitCommit
 		meta.Capabilities = existing.Capabilities
+		meta.AgentMessages = existing.AgentMessages && existing.Auth.Mode == SiteAuthOwner
 	}
 	if _, err := s.ReadSiteFile(tenant, slug, "index.html"); errors.Is(err, ErrNotFound) {
 		if err := s.WriteSiteFile(tenant, slug, "index.html", []byte(s.defaultIndex)); err != nil {
@@ -406,7 +438,7 @@ func (s *Store) DeleteSite(tenant, slug string) error {
 	if err := s.backend.Delete(ctx, siteMetaCollection(tenant), slug); err != nil {
 		return err
 	}
-	for _, collection := range []string{siteFilesCollection(tenant, slug), siteDataCollection(tenant, slug), siteUploadsCollection(tenant, slug), sitePublishesCollection(tenant, slug), sitePublishFilesCollection(tenant, slug, "")} {
+	for _, collection := range []string{siteFilesCollection(tenant, slug), siteDataCollection(tenant, slug), siteUploadsCollection(tenant, slug), siteAgentMessagesCollection(tenant, slug), siteAgentResponsesCollection(tenant, slug), sitePublishesCollection(tenant, slug), sitePublishFilesCollection(tenant, slug, "")} {
 		if err := s.backend.DeleteCollection(ctx, collection); err != nil {
 			return err
 		}
@@ -552,12 +584,208 @@ func (s *Store) UpdateSiteAuth(tenant, slug string, policy SiteAuthPolicy) (Site
 		return SiteMeta{}, err
 	}
 	meta.Auth = normalized
+	if normalized.Mode != SiteAuthOwner {
+		meta.AgentMessages = false
+	}
 	meta.UpdatedAt = time.Now().UTC()
 	meta.UpdatedBy = tenant
 	if err := s.writeMeta(tenant, meta); err != nil {
 		return SiteMeta{}, err
 	}
 	return meta, nil
+}
+
+func (s *Store) UpdateSiteAgentMessages(tenant, slug string, enabled bool) (SiteMeta, error) {
+	if err := validateTenant(tenant); err != nil {
+		return SiteMeta{}, err
+	}
+	if !ValidSlug(slug) {
+		return SiteMeta{}, fmt.Errorf("invalid slug %q", slug)
+	}
+	meta, err := s.ReadMeta(tenant, slug)
+	if err != nil {
+		return SiteMeta{}, err
+	}
+	if enabled && meta.Auth.Mode != SiteAuthOwner {
+		return SiteMeta{}, fmt.Errorf("agent messages are only available when site access is owner")
+	}
+	meta.AgentMessages = enabled
+	meta.UpdatedAt = time.Now().UTC()
+	meta.UpdatedBy = tenant
+	if err := s.writeMeta(tenant, meta); err != nil {
+		return SiteMeta{}, err
+	}
+	return meta, nil
+}
+
+func (s *Store) CreateAgentMessage(tenant, slug, sender, text string, screenshot *Screenshot) (AgentMessage, error) {
+	if err := validateTenant(tenant); err != nil {
+		return AgentMessage{}, err
+	}
+	if !ValidSlug(slug) {
+		return AgentMessage{}, fmt.Errorf("invalid slug %q", slug)
+	}
+	meta, err := s.ReadMeta(tenant, slug)
+	if err != nil {
+		return AgentMessage{}, err
+	}
+	if !meta.AgentMessages || meta.Auth.Mode != SiteAuthOwner {
+		return AgentMessage{}, fmt.Errorf("agent messages are not enabled for this owner-only site")
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return AgentMessage{}, fmt.Errorf("message is required")
+	}
+	screenshot = normalizeScreenshot(screenshot)
+	id, err := randomHex(8)
+	if err != nil {
+		return AgentMessage{}, err
+	}
+	msg := AgentMessage{
+		ID:         time.Now().UTC().Format("20060102150405") + "-" + id,
+		Tenant:     tenant,
+		Site:       slug,
+		Text:       text,
+		Sender:     strings.ToLower(strings.TrimSpace(sender)),
+		Screenshot: screenshot,
+		CreatedAt:  time.Now().UTC(),
+	}
+	b, err := json.MarshalIndent(msg, "", "  ")
+	if err != nil {
+		return AgentMessage{}, err
+	}
+	if err := s.backend.Put(context.Background(), siteAgentMessagesCollection(tenant, slug), msg.ID, b); err != nil {
+		return AgentMessage{}, err
+	}
+	return msg, nil
+}
+
+func (s *Store) CreateAgentResponse(tenant, slug, text string) (AgentResponse, error) {
+	if err := validateTenant(tenant); err != nil {
+		return AgentResponse{}, err
+	}
+	if !ValidSlug(slug) {
+		return AgentResponse{}, fmt.Errorf("invalid slug %q", slug)
+	}
+	meta, err := s.ReadMeta(tenant, slug)
+	if err != nil {
+		return AgentResponse{}, err
+	}
+	if !meta.AgentMessages || meta.Auth.Mode != SiteAuthOwner {
+		return AgentResponse{}, fmt.Errorf("agent messages are not enabled for this owner-only site")
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return AgentResponse{}, fmt.Errorf("response is required")
+	}
+	id, err := randomHex(8)
+	if err != nil {
+		return AgentResponse{}, err
+	}
+	response := AgentResponse{
+		ID:        time.Now().UTC().Format("20060102150405") + "-" + id,
+		Tenant:    tenant,
+		Site:      slug,
+		Text:      text,
+		CreatedAt: time.Now().UTC(),
+	}
+	b, err := json.MarshalIndent(response, "", "  ")
+	if err != nil {
+		return AgentResponse{}, err
+	}
+	if err := s.backend.DeleteCollection(context.Background(), siteAgentResponsesCollection(tenant, slug)); err != nil {
+		return AgentResponse{}, err
+	}
+	if err := s.backend.Put(context.Background(), siteAgentResponsesCollection(tenant, slug), response.ID, b); err != nil {
+		return AgentResponse{}, err
+	}
+	return response, nil
+}
+
+func (s *Store) ListAgentMessages(tenant, slug string) ([]AgentMessage, error) {
+	if err := validateTenant(tenant); err != nil {
+		return nil, err
+	}
+	if !ValidSlug(slug) {
+		return nil, fmt.Errorf("invalid slug %q", slug)
+	}
+	if _, err := s.ReadMeta(tenant, slug); err != nil {
+		return nil, err
+	}
+	entries, err := s.backend.List(context.Background(), siteAgentMessagesCollection(tenant, slug), "")
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]AgentMessage, 0, len(entries))
+	for _, entry := range entries {
+		var msg AgentMessage
+		if err := json.Unmarshal(entry.Value, &msg); err == nil && msg.ID != "" {
+			messages = append(messages, msg)
+		}
+	}
+	sort.Slice(messages, func(i, j int) bool { return messages[i].CreatedAt.Before(messages[j].CreatedAt) })
+	return messages, nil
+}
+
+func (s *Store) ListAgentResponses(tenant, slug string) ([]AgentResponse, error) {
+	if err := validateTenant(tenant); err != nil {
+		return nil, err
+	}
+	if !ValidSlug(slug) {
+		return nil, fmt.Errorf("invalid slug %q", slug)
+	}
+	if _, err := s.ReadMeta(tenant, slug); err != nil {
+		return nil, err
+	}
+	entries, err := s.backend.List(context.Background(), siteAgentResponsesCollection(tenant, slug), "")
+	if err != nil {
+		return nil, err
+	}
+	responses := make([]AgentResponse, 0, len(entries))
+	for _, entry := range entries {
+		var response AgentResponse
+		if err := json.Unmarshal(entry.Value, &response); err == nil && response.ID != "" {
+			responses = append(responses, response)
+		}
+	}
+	sort.Slice(responses, func(i, j int) bool { return responses[i].CreatedAt.Before(responses[j].CreatedAt) })
+	return responses, nil
+}
+
+func (s *Store) DeleteAgentMessage(tenant, slug, id string) error {
+	if err := validateTenant(tenant); err != nil {
+		return err
+	}
+	if !ValidSlug(slug) {
+		return fmt.Errorf("invalid slug %q", slug)
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || strings.Contains(id, "/") {
+		return fmt.Errorf("invalid message id")
+	}
+	if _, err := s.ReadMeta(tenant, slug); err != nil {
+		return err
+	}
+	return s.backend.Delete(context.Background(), siteAgentMessagesCollection(tenant, slug), id)
+}
+
+func normalizeScreenshot(screenshot *Screenshot) *Screenshot {
+	if screenshot == nil {
+		return nil
+	}
+	dataURL := strings.TrimSpace(screenshot.DataURL)
+	if dataURL == "" || len(dataURL) > 8*1024*1024 {
+		return nil
+	}
+	name := strings.TrimSpace(screenshot.Name)
+	if name == "" {
+		name = "screenshot.png"
+	}
+	typ := strings.TrimSpace(screenshot.Type)
+	if typ == "" {
+		typ = "image/png"
+	}
+	return &Screenshot{Name: name, Type: typ, DataURL: dataURL}
 }
 
 func (s *Store) ReadData(tenant, slug string) (map[string]any, error) {

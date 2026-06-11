@@ -113,6 +113,13 @@ func (a *App) routes() {
 	a.mux.HandleFunc("GET /api/sites/{slug}/auth", a.requireTenant(a.handleGetSiteAuth))
 	a.mux.HandleFunc("PUT /api/sites/{slug}/auth", a.requireTenant(a.handleSetSiteAuth))
 	a.mux.HandleFunc("POST /api/sites/{slug}/auth", a.requireTenant(a.handleSetSiteAuth))
+	a.mux.HandleFunc("GET /api/sites/{slug}/agent", a.requireTenant(a.handleGetSiteAgent))
+	a.mux.HandleFunc("PUT /api/sites/{slug}/agent", a.requireTenant(a.handleSetSiteAgent))
+	a.mux.HandleFunc("POST /api/sites/{slug}/agent", a.requireTenant(a.handleSetSiteAgent))
+	a.mux.HandleFunc("GET /api/sites/{slug}/agent/messages", a.requireTenant(a.handleListAgentMessages))
+	a.mux.HandleFunc("DELETE /api/sites/{slug}/agent/messages/{id}", a.requireTenant(a.handleDeleteAgentMessage))
+	a.mux.HandleFunc("GET /api/sites/{slug}/agent/responses", a.requireTenant(a.handleListAgentResponses))
+	a.mux.HandleFunc("POST /api/sites/{slug}/agent/responses", a.requireTenant(a.handleCreateAgentResponse))
 	a.mux.HandleFunc("GET /api/sites/{slug}/publishes", a.requireTenant(a.handleListPublishes))
 	a.mux.HandleFunc("POST /api/sites/{slug}/publishes", a.requireTenant(a.handleRecordPublish))
 	a.mux.HandleFunc("POST /api/sites/{slug}/rollback", a.requireTenant(a.handleRollbackPublish))
@@ -156,6 +163,9 @@ func (a *App) publicAPIMux() http.Handler {
 	mux.HandleFunc("DELETE /{slug}/uploads", a.handlePublicUploads)
 	mux.HandleFunc("GET /{slug}/archive", a.handlePublicArchive)
 	mux.HandleFunc("POST /{slug}/ai", a.handlePublicAI)
+	mux.HandleFunc("GET /{slug}/agent", a.handlePublicAgentStatus)
+	mux.HandleFunc("POST /{slug}/agent/messages", a.handlePublicAgentMessage)
+	mux.HandleFunc("GET /{slug}/agent/responses", a.handlePublicAgentResponses)
 
 	// Canonical tenant-qualified browser API routes.
 	mux.HandleFunc("GET /t/{tenant}/s/{slug}/files", a.handlePublicTenantFiles)
@@ -172,6 +182,9 @@ func (a *App) publicAPIMux() http.Handler {
 	mux.HandleFunc("DELETE /t/{tenant}/s/{slug}/uploads", a.handlePublicTenantUploads)
 	mux.HandleFunc("GET /t/{tenant}/s/{slug}/archive", a.handlePublicTenantArchive)
 	mux.HandleFunc("POST /t/{tenant}/s/{slug}/ai", a.handlePublicTenantAI)
+	mux.HandleFunc("GET /t/{tenant}/s/{slug}/agent", a.handlePublicTenantAgentStatus)
+	mux.HandleFunc("POST /t/{tenant}/s/{slug}/agent/messages", a.handlePublicTenantAgentMessage)
+	mux.HandleFunc("GET /t/{tenant}/s/{slug}/agent/responses", a.handlePublicTenantAgentResponses)
 
 	return mux
 }
@@ -270,10 +283,192 @@ func (a *App) handleSite(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if ct := mime.TypeByExtension(filepath.Ext(p)); ct != "" {
+	ct := mime.TypeByExtension(filepath.Ext(p))
+	if ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
+	if shouldInjectAgentWidget(ct, p) {
+		if meta, err := a.store.ReadMeta(tenant, slug); err == nil && meta.AgentMessages && meta.Auth.Mode == api.SiteAuthOwner {
+			b = injectAgentWidget(b, tenant, slug)
+			http.ServeContent(w, r, filepath.Base(p), time.Now(), bytes.NewReader(b))
+			return
+		}
+	}
 	http.ServeContent(w, r, filepath.Base(p), time.Now(), bytes.NewReader(b))
+}
+
+func shouldInjectAgentWidget(contentType, p string) bool {
+	ext := strings.ToLower(filepath.Ext(p))
+	return ext == ".html" || ext == ".htm" || strings.HasPrefix(strings.ToLower(contentType), "text/html")
+}
+
+func injectAgentWidget(page []byte, tenant, slug string) []byte {
+	if bytes.Contains(page, []byte("data-flink-agent-widget")) {
+		return page
+	}
+	widget := agentWidgetHTML(tenant, slug)
+	lower := bytes.ToLower(page)
+	if i := bytes.LastIndex(lower, []byte("</body>")); i >= 0 {
+		out := make([]byte, 0, len(page)+len(widget))
+		out = append(out, page[:i]...)
+		out = append(out, widget...)
+		out = append(out, page[i:]...)
+		return out
+	}
+	return append(append([]byte{}, page...), widget...)
+}
+
+func agentWidgetHTML(tenant, slug string) []byte {
+	tenantJSON, _ := json.Marshal(tenant)
+	slugJSON, _ := json.Marshal(slug)
+	return []byte(`<style data-flink-agent-widget>
+#flink-agent-widget{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:min(340px,calc(100vw - 32px));font:14px/1.4 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#17202a;background:#fff;border:1px solid #cfd7df;box-shadow:0 12px 32px rgba(15,23,42,.18);border-radius:8px;padding:12px}
+#flink-agent-widget[data-collapsed=true]{width:58px;height:58px;padding:0;border-radius:999px;overflow:hidden}
+#flink-agent-widget-toggle{width:100%;border:0;border-radius:999px;background:#17202a;color:#fff;font:700 12px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:10px;cursor:pointer}
+#flink-agent-widget[data-collapsed=false] #flink-agent-widget-toggle{width:auto;border-radius:6px;margin-bottom:8px;background:#eef2f5;color:#17202a}
+#flink-agent-widget[data-collapsed=true] #flink-agent-widget-panel{display:none}
+#flink-agent-widget form{display:grid;gap:8px;margin:0}
+#flink-agent-widget textarea{box-sizing:border-box;width:100%;min-height:76px;resize:vertical;border:1px solid #aeb8c2;border-radius:6px;padding:8px;font:inherit;color:inherit;background:#fff}
+#flink-agent-widget .flink-agent-send{border:0;border-radius:6px;background:#1957d2;color:#fff;font:600 14px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:9px 10px;cursor:pointer}
+#flink-agent-widget .flink-agent-send:disabled{background:#8da4d8;cursor:not-allowed}
+#flink-agent-widget .flink-agent-secondary{border:1px solid #aeb8c2;border-radius:6px;background:#fff;color:#17202a;font:600 13px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:8px 10px;cursor:pointer}
+#flink-agent-widget-status{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:#46515c}
+#flink-agent-widget-status i{width:9px;height:9px;border-radius:999px;background:#aeb8c2;display:inline-block}
+#flink-agent-widget[data-listening=true] #flink-agent-widget-status i{background:#1b8f4d}
+#flink-agent-widget-responses{display:grid;gap:6px;margin:0 0 8px}
+#flink-agent-widget-responses article{border-left:3px solid #1957d2;background:#f5f8fb;border-radius:4px;padding:7px 8px;font-size:12px;color:#26313d}
+#flink-agent-widget-result{min-height:18px;font-size:12px;color:#46515c}
+</style><div id="flink-agent-widget" data-flink-agent-widget data-listening="false" data-collapsed="false"><button id="flink-agent-widget-toggle" type="button" aria-expanded="true">Agent</button><div id="flink-agent-widget-panel"><div id="flink-agent-widget-status"><i></i><span>Checking agent...</span></div><div id="flink-agent-widget-responses"></div><form><textarea name="message" placeholder="Message the agent" required></textarea><button class="flink-agent-secondary" type="button" id="flink-agent-screenshot">Include screenshot</button><button class="flink-agent-send">Send to agent</button><div id="flink-agent-widget-result" role="status" aria-live="polite"></div></form></div></div><script data-flink-agent-widget>
+(() => {
+  const tenant = ` + string(tenantJSON) + `;
+  const site = ` + string(slugJSON) + `;
+  const root = document.getElementById("flink-agent-widget");
+  if (!root) return;
+  const toggle = root.querySelector("#flink-agent-widget-toggle");
+  const responses = root.querySelector("#flink-agent-widget-responses");
+  const statusText = root.querySelector("#flink-agent-widget-status span");
+  const form = root.querySelector("form");
+  const textarea = root.querySelector("textarea");
+  const button = root.querySelector(".flink-agent-send");
+  const screenshotButton = root.querySelector("#flink-agent-screenshot");
+  const result = root.querySelector("#flink-agent-widget-result");
+  const apiBase = "/api/public/t/" + encodeURIComponent(tenant) + "/s/" + encodeURIComponent(site) + "/agent";
+  const listeningKey = "flink-agent-listening:" + tenant + ":" + site;
+  const collapsedKey = "flink-agent-collapsed:" + tenant + ":" + site;
+  const responseKey = "flink-agent-response:" + tenant + ":" + site;
+  let screenshot = null;
+  function setCollapsed(collapsed) {
+    root.dataset.collapsed = collapsed ? "true" : "false";
+    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    sessionStorage.setItem(collapsedKey, collapsed ? "true" : "false");
+  }
+  setCollapsed(sessionStorage.getItem(collapsedKey) === "true");
+  toggle.addEventListener("click", () => setCollapsed(root.dataset.collapsed !== "true"));
+  function renderResponses(items) {
+    responses.replaceChildren();
+    const latest = items.at(-1);
+    if (!latest) return;
+    for (const item of [latest]) {
+      const article = document.createElement("article");
+      article.textContent = item.text;
+      responses.append(article);
+    }
+  }
+  async function loadResponses() {
+    try {
+      const res = await fetch(apiBase + "/responses", { credentials: "same-origin" });
+      if (!res.ok) return;
+      const items = await res.json();
+      const latest = items.at(-1);
+      const previous = sessionStorage.getItem(responseKey);
+      if (latest?.id) {
+        sessionStorage.setItem(responseKey, latest.id);
+        if (previous && previous !== latest.id) {
+          location.reload();
+          return;
+        }
+      }
+      renderResponses(items);
+    } catch {}
+  }
+  async function captureScreenshot() {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      throw new Error("Screenshot capture is not available in this browser.");
+    }
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    try {
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      await video.play();
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || innerWidth;
+      canvas.height = video.videoHeight || innerHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+      return { name: "screenshot.png", type: "image/png", dataUrl: canvas.toDataURL("image/png") };
+    } finally {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+  }
+  async function refresh() {
+    try {
+      const res = await fetch(apiBase, { credentials: "same-origin" });
+      if (!res.ok) throw new Error("status failed");
+      const status = await res.json();
+      const wasListening = sessionStorage.getItem(listeningKey);
+      sessionStorage.setItem(listeningKey, status.listening ? "true" : "false");
+      if (wasListening === "false" && status.listening) {
+        location.reload();
+        return;
+      }
+      root.dataset.listening = status.listening ? "true" : "false";
+      statusText.textContent = status.listening ? "Agent listening" : "Agent offline";
+    } catch {
+      root.dataset.listening = "false";
+      statusText.textContent = "Agent status unknown";
+    }
+  }
+  screenshotButton.addEventListener("click", async () => {
+    screenshotButton.disabled = true;
+    result.textContent = "Choose this browser tab or window to attach a screenshot.";
+    try {
+      screenshot = await captureScreenshot();
+      result.textContent = "Screenshot attached.";
+    } catch (err) {
+      result.textContent = err instanceof Error ? err.message : "Screenshot failed.";
+    } finally {
+      screenshotButton.disabled = false;
+    }
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const text = textarea.value.trim();
+    if (!text) return;
+    button.disabled = true;
+    result.textContent = "Sending...";
+    try {
+      const res = await fetch(apiBase + "/messages", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(screenshot ? { text, screenshot } : { text }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "message failed");
+      textarea.value = "";
+      screenshot = null;
+      result.textContent = root.dataset.listening === "true" ? "Sent to agent." : "Saved for the next agent.";
+      refresh();
+    } catch (err) {
+      result.textContent = err instanceof Error ? err.message : "Message failed.";
+    } finally {
+      button.disabled = false;
+    }
+  });
+  refresh();
+  loadResponses();
+  setInterval(refresh, 3000);
+  setInterval(loadResponses, 5000);
+})();
+</script>`)
 }
 
 func (a *App) authorizeSitePage(w http.ResponseWriter, r *http.Request, tenant, slug string) bool {
