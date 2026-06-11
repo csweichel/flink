@@ -494,6 +494,39 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "text/plain; charset=utf-8" || !bytes.Contains(res.Body.Bytes(), []byte("Flink agent instructions")) {
 		t.Fatalf("bare curl root should receive agent instructions: status=%d content-type=%q body=%s", res.Code, res.Header().Get("Content-Type"), res.Body.String())
 	}
+	if res.Header().Get("X-Flink-Server") == "" || res.Header().Get("X-Flink-Agent-Instructions") == "" || res.Header().Get("Link") != `</.well-known/flink.json>; rel="service-desc"` {
+		t.Fatalf("root should include discovery headers: %#v", res.Header())
+	}
+
+	res = rawRequest(t, a, http.MethodHead, "/", nil, "")
+	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "text/plain; charset=utf-8" || res.Header().Get("X-Flink-Agent-Instructions") == "" {
+		t.Fatalf("HEAD root should be discoverable: status=%d content-type=%q headers=%#v", res.Code, res.Header().Get("Content-Type"), res.Header())
+	}
+
+	res = rawRequest(t, a, http.MethodGet, "/_flink/agent-instructions", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("Flink agent instructions")) {
+		t.Fatalf("agent instructions alias failed: %d %s", res.Code, res.Body.String())
+	}
+
+	res = rawRequest(t, a, http.MethodGet, "/.well-known/flink.json", nil, "")
+	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "application/json; charset=utf-8" {
+		t.Fatalf("discovery JSON failed: status=%d content-type=%q body=%s", res.Code, res.Header().Get("Content-Type"), res.Body.String())
+	}
+	var discovery struct {
+		Type              string   `json:"type"`
+		Server            string   `json:"server"`
+		AgentInstructions string   `json:"agent_instructions"`
+		RequiredEnv       []string `json:"required_env"`
+		CLI               string   `json:"cli"`
+		SiteURLTemplate   string   `json:"site_url_template"`
+		Commands          []string `json:"commands"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &discovery); err != nil {
+		t.Fatal(err)
+	}
+	if discovery.Type != "flink" || discovery.SiteURLTemplate != "https://{tenant}--{site}.quick.internal/" || discovery.AgentInstructions == "" || len(discovery.RequiredEnv) != 2 || len(discovery.Commands) != 3 {
+		t.Fatalf("unexpected discovery JSON: %#v", discovery)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept", "text/html")
@@ -515,6 +548,11 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 	res = rawRequest(t, a, http.MethodGet, "/_flink/login", nil, "")
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`/flink-logo.png`)) || !bytes.Contains(res.Body.Bytes(), []byte(`Made with ❤️ by`)) || bytes.Contains(res.Body.Bytes(), []byte(`GitHub repo`)) {
 		t.Fatalf("login should reference logo and footer: %d %s", res.Code, res.Body.String())
+	}
+
+	res = rawRequest(t, a, http.MethodHead, "/_flink/login", nil, "")
+	if res.Code != http.StatusMethodNotAllowed || res.Header().Get("X-Flink-Agent-Instructions") == "" || !bytes.Contains(res.Body.Bytes(), []byte("This is a Flink server")) {
+		t.Fatalf("login 405 should include discovery hint: status=%d headers=%#v body=%s", res.Code, res.Header(), res.Body.String())
 	}
 }
 
@@ -538,6 +576,20 @@ func TestLLMSTXTFallsBackToPathHostingWithoutBaseHost(t *testing.T) {
 		if !bytes.Contains(res.Body.Bytes(), []byte(want)) {
 			t.Fatalf("fallback llms.txt missing %q:\n%s", want, res.Body.String())
 		}
+	}
+
+	res = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "http://flink.internal/.well-known/flink.json", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	a.ServeHTTP(res, req)
+	var discovery struct {
+		SiteURLTemplate string `json:"site_url_template"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &discovery); err != nil {
+		t.Fatal(err)
+	}
+	if discovery.SiteURLTemplate != "https://flink.internal/t/{tenant}/s/{site}/" {
+		t.Fatalf("unexpected fallback discovery JSON: %#v", discovery)
 	}
 }
 

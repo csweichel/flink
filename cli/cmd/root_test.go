@@ -323,6 +323,17 @@ func TestMissingTenantCredentialsFailBeforeNetwork(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "missing tenant username") {
 		t.Fatalf("expected missing tenant error, got %v", err)
 	}
+	if !strings.Contains(err.Error(), "Set FLINK_SERVER=http://127.0.0.1:1, FLINK_TENANT, and FLINK_PASSWORD") || !strings.Contains(err.Error(), "Published sites use http://127.0.0.1:1/t/<tenant>/s/<site>/") {
+		t.Fatalf("missing tenant error should include local deploy shape, got %v", err)
+	}
+
+	_, err = runCommand("site", "list", "--server", "https://csweichel.dev", "--tenant", "alice")
+	if err == nil || !strings.Contains(err.Error(), "missing tenant password") {
+		t.Fatalf("expected missing password error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Set FLINK_SERVER=https://csweichel.dev, FLINK_TENANT, and FLINK_PASSWORD") || !strings.Contains(err.Error(), "Published sites use https://<tenant>--<site>.csweichel.dev/") {
+		t.Fatalf("missing password error should include domain deploy shape, got %v", err)
+	}
 }
 
 func TestHelpPrintsPlainBannerWhenCaptured(t *testing.T) {

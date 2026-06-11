@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,10 +25,10 @@ func newClient(rawURL, username, password string) (*client, error) {
 	}
 	username = strings.ToLower(strings.TrimSpace(username))
 	if username == "" {
-		return nil, fmt.Errorf("missing tenant username; pass --tenant or set FLINK_TENANT")
+		return nil, missingClientAuthError(rawURL, "missing tenant username; pass --tenant or set FLINK_TENANT")
 	}
 	if strings.TrimSpace(password) == "" {
-		return nil, fmt.Errorf("missing tenant password; pass --password or set FLINK_PASSWORD")
+		return nil, missingClientAuthError(rawURL, "missing tenant password; pass --password or set FLINK_PASSWORD")
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -123,4 +124,26 @@ func (c *client) doBytes(method, path string, body []byte, contentType string, o
 
 func (c *client) siteURL(slug string) string {
 	return c.baseURL + "/t/" + c.username + "/s/" + slug + "/"
+}
+
+func missingClientAuthError(rawURL, message string) error {
+	if hint := clientConfigHint(rawURL); hint != "" {
+		return fmt.Errorf("%s\n%s", message, hint)
+	}
+	return fmt.Errorf("%s", message)
+}
+
+func clientConfigHint(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	baseURL := strings.TrimRight(u.String(), "/")
+	siteURL := baseURL + "/t/<tenant>/s/<site>/"
+	host := u.Hostname()
+	if u.Port() == "" && u.EscapedPath() == "" && host != "localhost" && net.ParseIP(host) == nil {
+		siteURL = u.Scheme + "://<tenant>--<site>." + host + "/"
+	}
+	return "Set FLINK_SERVER=" + baseURL + ", FLINK_TENANT, and FLINK_PASSWORD.\nPublished sites use " + siteURL
 }

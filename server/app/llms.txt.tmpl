@@ -10,7 +10,7 @@ This Flink server does not have domain-based hosting configured, so use path-bas
 
 Inputs you need:
 
-- FLINK_SERVER: {{.Origin}}
+- FLINK_SERVER: {{.Server}}
 - FLINK_TENANT: the tenant username
 - FLINK_PASSWORD: the tenant password
 - site name: a lowercase slug such as my-site
@@ -37,7 +37,7 @@ Install and configure the CLI:
 curl -L -o flink.tar.gz {{.CLIBase}}flink_linux_amd64.tar.gz
 tar -xzf flink.tar.gz
 
-export FLINK_SERVER={{.Origin}}
+export FLINK_SERVER={{.Server}}
 export FLINK_TENANT=<tenant>
 export FLINK_PASSWORD=<password>
 

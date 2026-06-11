@@ -91,6 +91,8 @@ func (a *App) routes() {
 	a.mux.HandleFunc("/api/sites/", a.requireTenant(a.handleSiteAPI))
 	a.mux.HandleFunc("/api/public/", a.handlePublicAPI)
 	a.mux.HandleFunc("/llms.txt", a.handleLLMSTXT)
+	a.mux.HandleFunc("/_flink/agent-instructions", a.handleLLMSTXT)
+	a.mux.HandleFunc("/.well-known/flink.json", a.handleDiscoveryJSON)
 	a.mux.HandleFunc("/flink-logo.png", a.handleLogo)
 	a.mux.HandleFunc("/favicon.ico", a.handleLogo)
 	a.mux.HandleFunc("/flink.js", func(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +167,7 @@ func (a *App) handleSite(w http.ResponseWriter, r *http.Request) {
 	}
 	tenant, slug, sitePath := a.resolveSite(r, defaultTenant)
 	if slug == "" {
-		if r.Method == http.MethodGet && r.URL.Path == "/" && !wantsHTML(r) {
+		if r.URL.Path == "/" && (r.Method == http.MethodHead || (r.Method == http.MethodGet && !wantsHTML(r))) {
 			a.serveLLMSTXT(w, r)
 			return
 		}

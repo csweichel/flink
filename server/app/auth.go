@@ -19,6 +19,7 @@ func (a *App) requireTenant(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r.WithContext(context.WithValue(r.Context(), tenantContextKey{}, tenant)))
 			return
 		}
+		setDiscoveryHeaders(w, r)
 		if wantsHTML(r) || r.URL.Path == "/_flink" || r.URL.Path == "/_flink/" {
 			http.Redirect(w, r, "/_flink/login", http.StatusSeeOther)
 			return
@@ -87,7 +88,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "flink_session", Value: session.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
 		http.Redirect(w, r, "/_flink", http.StatusSeeOther)
 	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeMethodNotAllowed(w, r)
 	}
 }
 
@@ -136,7 +137,7 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = io.WriteString(w, pendingHTML(tenant.Username))
 	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeMethodNotAllowed(w, r)
 	}
 }
 
@@ -154,6 +155,13 @@ func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
 
 func wantsHTML(r *http.Request) bool {
 	return r.Method == http.MethodGet && strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
+func writeMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	setDiscoveryHeaders(w, r)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusMethodNotAllowed)
+	_, _ = io.WriteString(w, "This is a Flink server. For agent deployment instructions, GET / or fetch /.well-known/flink.json.\n")
 }
 
 func loginHTML(message string, showRegister bool) string {
