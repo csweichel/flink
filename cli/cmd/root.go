@@ -24,6 +24,7 @@ func NewRootCommandWithOptions(options Options) *cobra.Command {
 	serverURL := options.ServerURL
 	username := options.Tenant
 	password := options.Password
+	jsonOut := false
 
 	root := &cobra.Command{
 		Use:   "flink",
@@ -32,9 +33,25 @@ func NewRootCommandWithOptions(options Options) *cobra.Command {
 	root.PersistentFlags().StringVar(&serverURL, "server", serverURL, "Flink server URL")
 	root.PersistentFlags().StringVar(&username, "tenant", username, "approved Flink tenant username")
 	root.PersistentFlags().StringVar(&password, "password", password, "Flink tenant password")
+	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "print machine-readable JSON")
 	banner.InstallHelp(root)
 
-	root.AddCommand(siteCommand(&serverURL, &username, &password))
+	ctx := &commandContext{
+		serverURL: &serverURL,
+		username:  &username,
+		password:  &password,
+		jsonOut:   &jsonOut,
+	}
+	root.AddCommand(publishCommand(ctx))
+	root.AddCommand(initCommand(ctx))
+	root.AddCommand(openCommand(ctx))
+	root.AddCommand(listCommand(ctx))
+	root.AddCommand(inspectCommand(ctx))
+	root.AddCommand(historyCommand(ctx))
+	root.AddCommand(rollbackCommand(ctx))
+	root.AddCommand(snapshotCommand(ctx))
+	root.AddCommand(authCommand(ctx))
+	root.AddCommand(configCommand(ctx))
 
 	return root
 }

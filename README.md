@@ -68,17 +68,17 @@ curl -L -o flink.tar.gz https://github.com/csweichel/flink/releases/latest/downl
 tar -xzf flink.tar.gz
 ```
 
-Create and publish a site:
+Create a new prototype from a built-in template:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink site create hello
-bin/flink --server https://flink.internal --tenant demo --password flink site write hello ./index.html
+bin/flink --server https://flink.internal --tenant demo --password flink init todo ./hello --site hello
 ```
 
-Publish a whole directory tree:
+Publish a single file or whole directory tree. `publish` creates the site when needed, uploads current files, removes stale hosted files, records publish history, and prints the live URL:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink site write hello ./dist
+bin/flink --server https://flink.internal --tenant demo --password flink publish ./hello --site hello
+bin/flink --server https://flink.internal --tenant demo --password flink publish ./dist --site hello
 ```
 
 Files are served from the same site base. For example, `./dist/assets/app.css` is available at:
@@ -98,34 +98,34 @@ When running locally on `localhost` without wildcard DNS, use the fallback path 
 List sites:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink site list
+bin/flink --server https://flink.internal --tenant demo --password flink list
+bin/flink --server https://flink.internal --tenant demo --password flink inspect hello
 ```
 
 Sites use the server's `defaultSiteAuthMode` when created. On the default server config, sites are private to the publishing tenant. Change who can view the hosted site and use its browser storage, upload, realtime, and AI APIs:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink site auth hello
-bin/flink --server https://flink.internal --tenant demo --password flink site auth hello owner
-bin/flink --server https://flink.internal --tenant demo --password flink site auth hello none
-bin/flink --server https://flink.internal --tenant demo --password flink site auth hello tenants
-bin/flink --server https://flink.internal --tenant demo --password flink site auth hello tenants demo alice
+bin/flink --server https://flink.internal --tenant demo --password flink auth hello
+bin/flink --server https://flink.internal --tenant demo --password flink auth hello owner
+bin/flink --server https://flink.internal --tenant demo --password flink auth hello none
+bin/flink --server https://flink.internal --tenant demo --password flink auth hello tenants
+bin/flink --server https://flink.internal --tenant demo --password flink auth hello tenants demo alice
 ```
 
 Auth modes are `owner`, `none`, and `tenants`. `tenants` with no tenant list allows any approved tenant. `tenants <tenant>...` allows only the listed tenants.
 
-Publish a built-in example:
+Inspect publish history, roll back to a previous publish, or export a static snapshot:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink site example
-bin/flink --server https://flink.internal --tenant demo --password flink site example hello chat
+bin/flink --server https://flink.internal --tenant demo --password flink history hello
+bin/flink --server https://flink.internal --tenant demo --password flink rollback hello
+bin/flink --server https://flink.internal --tenant demo --password flink snapshot hello ./hello-snapshot
 ```
 
-List or remove published files:
+Use `--json` on commands when an agent or script needs machine-readable output:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink site files hello
-bin/flink --server https://flink.internal --tenant demo --password flink site files hello assets/
-bin/flink --server https://flink.internal --tenant demo --password flink site delete-file hello assets/app.css
+bin/flink --server https://flink.internal --tenant demo --password flink publish ./dist --site hello --json
 ```
 
 To avoid repeating flags:
@@ -135,8 +135,9 @@ export FLINK_SERVER=https://flink.internal
 export FLINK_TENANT=demo
 export FLINK_PASSWORD=flink
 
-bin/flink site create hello
-bin/flink site write hello ./index.html
+bin/flink init blank ./hello --site hello
+bin/flink publish ./hello
+bin/flink open hello
 ```
 
 ## Guidance For AI Agents Building Sites
@@ -147,7 +148,7 @@ When an agent is asked to build and deploy a Flink-hosted website:
 
 1. Get or infer the Flink server URL and tenant credentials.
 2. Build the website as plain static files first, usually starting with `index.html`.
-3. Use the Flink CLI to create the site and publish files.
+3. Use `flink publish` to create or update the site and publish files.
 4. Use `/flink.js` for backend features instead of creating a separate backend.
 5. Store JSON state with Flink storage, uploaded file URLs with Flink uploads, and realtime messages with Flink rooms.
 6. Keep the first deployed version usable. Add more files only when the prototype needs them.
@@ -155,8 +156,7 @@ When an agent is asked to build and deploy a Flink-hosted website:
 Minimal publish loop:
 
 ```sh
-bin/flink site create my-site
-bin/flink site write my-site ./dist
+bin/flink publish ./dist --site my-site
 ```
 
 Then open:
@@ -507,7 +507,7 @@ Configure the default auth mode for newly-created sites:
 defaultSiteAuthMode: owner
 ```
 
-Allowed values are `owner`, `none`, and `tenants`. Use `flink site auth <site> tenants <tenant>...` when a specific site should be shared with selected tenants.
+Allowed values are `owner`, `none`, and `tenants`. Use `flink auth <site> tenants <tenant>...` when a specific site should be shared with selected tenants.
 
 ## Ona Development Environment
 

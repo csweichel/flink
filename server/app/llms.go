@@ -94,9 +94,9 @@ func (a *App) discovery(r *http.Request) flinkDiscovery {
 		CLI:               cliBase + "flink_linux_amd64.tar.gz",
 		SiteURLTemplate:   siteURLTemplate,
 		Commands: []string{
-			"flink site create <site>",
-			"flink site write <site> ./dist",
-			"flink site auth <site> none",
+			"flink publish ./dist --site <site>",
+			"flink auth <site> none",
+			"flink inspect <site>",
 		},
 		CLIBase:       cliBase,
 		BaseHost:      a.baseHost,

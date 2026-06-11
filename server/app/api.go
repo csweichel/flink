@@ -10,170 +10,261 @@ import (
 	"github.com/csweichel/flink/server/api"
 )
 
-func (a *App) handleSites(w http.ResponseWriter, r *http.Request) {
+func (a *App) handleListSites(w http.ResponseWriter, r *http.Request) {
 	tenant := tenantFromContext(r.Context())
-	switch r.Method {
-	case http.MethodGet:
-		sites, err := a.store.ListSites(tenant.Username)
-		writeJSON(w, sites, err)
-	case http.MethodPost:
-		var in struct {
-			Slug  string `json:"slug"`
-			Title string `json:"title"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		meta, err := a.store.CreateSite(tenant.Username, in.Slug, in.Title)
-		writeJSON(w, meta, err)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	sites, err := a.store.ListSites(tenant.Username)
+	writeJSON(w, sites, err)
 }
 
-func (a *App) handleSiteAPI(w http.ResponseWriter, r *http.Request) {
-	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/sites/"), "/")
-	if slug, ok := strings.CutSuffix(rest, "/auth"); ok && api.ValidSlug(slug) {
-		tenant := tenantFromContext(r.Context())
-		switch r.Method {
-		case http.MethodGet:
-			meta, err := a.store.ReadMeta(tenant.Username, slug)
-			if err != nil {
-				writeError(w, http.StatusNotFound, err)
-				return
-			}
-			writeJSON(w, meta.Auth, nil)
-		case http.MethodPut, http.MethodPost:
-			var policy api.SiteAuthPolicy
-			if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
-				writeError(w, http.StatusBadRequest, err)
-				return
-			}
-			meta, err := a.store.UpdateSiteAuth(tenant.Username, slug, policy)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err)
-				return
-			}
-			writeJSON(w, meta.Auth, nil)
-		default:
-			w.WriteHeader(http.StatusMethodNotAllowed)
-		}
+func (a *App) handleCreateSite(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	var in struct {
+		Slug  string `json:"slug"`
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if r.Method == http.MethodDelete && api.ValidSlug(rest) {
-		tenant := tenantFromContext(r.Context())
-		writeJSON(w, map[string]bool{"deleted": true}, a.store.DeleteSite(tenant.Username, rest))
-		return
-	}
-	slug, area, tail, ok := parseAPIPath(rest)
-	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid site API path"))
-		return
-	}
-	a.dispatchAPI(w, r, slug, area, tail)
+	meta, err := a.store.CreateSite(tenant.Username, in.Slug, in.Title)
+	writeJSON(w, meta, err)
 }
 
-func (a *App) handlePublicAPI(w http.ResponseWriter, r *http.Request) {
-	tenant, slug, area, tail, ok := parsePublicAPIPath(strings.TrimPrefix(r.URL.Path, "/api/public/"))
+func (a *App) handleSiteDetails(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid public API path"))
 		return
 	}
+	details, err := a.store.ReadSiteDetails(tenant.Username, slug)
+	writeJSON(w, details, err)
+}
+
+func (a *App) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, map[string]bool{"deleted": true}, a.store.DeleteSite(tenant.Username, slug))
+}
+
+func (a *App) handleGetSiteAuth(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	meta, err := a.store.ReadMeta(tenant.Username, slug)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, meta.Auth, nil)
+}
+
+func (a *App) handleSetSiteAuth(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	var policy api.SiteAuthPolicy
+	if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	meta, err := a.store.UpdateSiteAuth(tenant.Username, slug, policy)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, meta.Auth, nil)
+}
+
+func (a *App) handleListPublishes(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	records, err := a.store.ListPublishes(tenant.Username, slug)
+	writeJSON(w, records, err)
+}
+
+func (a *App) handleRecordPublish(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	var record api.PublishRecord
+	if err := json.NewDecoder(r.Body).Decode(&record); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	out, err := a.store.RecordPublish(tenant.Username, slug, record)
+	writeJSON(w, out, err)
+}
+
+func (a *App) handleRollbackPublish(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	record, err := a.store.RollbackPublish(tenant.Username, slug, in.Version)
+	writeJSON(w, record, err)
+}
+
+func (a *App) handleTenantFiles(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	a.handleFiles(w, r, tenant.Username, slug)
+}
+
+func (a *App) handleTenantData(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	a.handleData(w, r, tenant.Username, slug, r.PathValue("key"))
+}
+
+func (a *App) handleTenantUploads(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	a.handleUpload(w, r, tenant.Username, slug)
+}
+
+func (a *App) handleTenantArchive(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+	slug, ok := validPathSlug(w, r)
+	if !ok {
+		return
+	}
+	a.handleArchive(w, r, tenant.Username, slug)
+}
+
+func (a *App) handlePublicFiles(w http.ResponseWriter, r *http.Request) {
+	tenant, slug, ok := a.ownerPublicSite(w, r)
+	if !ok {
+		return
+	}
+	a.handleFiles(w, r, tenant, slug)
+}
+
+func (a *App) handlePublicData(w http.ResponseWriter, r *http.Request) {
+	tenant, slug, ok := a.authorizedPublicSite(w, r)
+	if !ok {
+		return
+	}
+	a.handleData(w, r, tenant, slug, r.PathValue("key"))
+}
+
+func (a *App) handlePublicUploads(w http.ResponseWriter, r *http.Request) {
+	tenant, slug, ok := a.authorizedPublicSite(w, r)
+	if !ok {
+		return
+	}
+	a.handleUpload(w, r, tenant, slug)
+}
+
+func (a *App) handlePublicArchive(w http.ResponseWriter, r *http.Request) {
+	tenant, slug, ok := a.ownerPublicSite(w, r)
+	if !ok {
+		return
+	}
+	a.handleArchive(w, r, tenant, slug)
+}
+
+func (a *App) handlePublicAI(w http.ResponseWriter, r *http.Request) {
+	_, _, ok := a.authorizedPublicSite(w, r)
+	if !ok {
+		return
+	}
+	a.handleAI(w, r)
+}
+
+func (a *App) handlePublicTenantFiles(w http.ResponseWriter, r *http.Request) {
+	a.handlePublicFiles(w, r)
+}
+
+func (a *App) handlePublicTenantData(w http.ResponseWriter, r *http.Request) {
+	a.handlePublicData(w, r)
+}
+
+func (a *App) handlePublicTenantUploads(w http.ResponseWriter, r *http.Request) {
+	a.handlePublicUploads(w, r)
+}
+
+func (a *App) handlePublicTenantArchive(w http.ResponseWriter, r *http.Request) {
+	a.handlePublicArchive(w, r)
+}
+
+func (a *App) handlePublicTenantAI(w http.ResponseWriter, r *http.Request) {
+	a.handlePublicAI(w, r)
+}
+
+func validPathSlug(w http.ResponseWriter, r *http.Request) (string, bool) {
+	slug := r.PathValue("slug")
+	if !api.ValidSlug(slug) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid site slug"))
+		return "", false
+	}
+	return slug, true
+}
+
+func (a *App) ownerPublicSite(w http.ResponseWriter, r *http.Request) (string, string, bool) {
 	authTenant, authenticated := a.authenticate(r)
+	if !authenticated {
+		writeError(w, http.StatusUnauthorized, fmt.Errorf("authentication required"))
+		return "", "", false
+	}
+	tenant := r.PathValue("tenant")
 	if tenant == "" {
+		tenant = authTenant.Username
+	} else if tenant != authTenant.Username {
+		http.NotFound(w, r)
+		return "", "", false
+	}
+	slug := r.PathValue("slug")
+	if !api.ValidSlug(tenant) || !api.ValidSlug(slug) {
+		http.NotFound(w, r)
+		return "", "", false
+	}
+	return tenant, slug, true
+}
+
+func (a *App) authorizedPublicSite(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	tenant := r.PathValue("tenant")
+	slug := r.PathValue("slug")
+	if tenant == "" {
+		authTenant, authenticated := a.authenticate(r)
 		if !authenticated {
 			writeError(w, http.StatusUnauthorized, fmt.Errorf("authentication required"))
-			return
+			return "", "", false
 		}
 		tenant = authTenant.Username
 	}
-	if area == "files" || area == "archive" {
-		if !authenticated {
-			writeError(w, http.StatusUnauthorized, fmt.Errorf("authentication required"))
-			return
-		}
-		if authTenant.Username != tenant {
-			http.NotFound(w, r)
-			return
-		}
-		a.dispatchAPIForTenant(w, r, tenant, slug, area, tail)
-		return
-	}
 	if !a.authorizeSiteAPI(w, r, tenant, slug) {
-		return
+		return "", "", false
 	}
-	a.dispatchAPIForTenant(w, r, tenant, slug, area, tail)
-}
-
-func parseAPIPath(rest string) (slug, area, tail string, ok bool) {
-	parts := strings.SplitN(rest, "/", 3)
-	if len(parts) < 2 || !api.ValidSlug(parts[0]) {
-		return "", "", "", false
-	}
-	if len(parts) == 3 {
-		tail = parts[2]
-	}
-	return parts[0], parts[1], tail, true
-}
-
-func parsePublicAPIPath(rest string) (tenant, slug, area, tail string, ok bool) {
-	rest = strings.Trim(rest, "/")
-	tenantParts := strings.SplitN(rest, "/", 6)
-	if len(tenantParts) >= 5 && tenantParts[0] == "t" && tenantParts[2] == "s" && api.ValidSlug(tenantParts[1]) && api.ValidSlug(tenantParts[3]) && isAPIArea(tenantParts[4]) {
-		if len(tenantParts) == 6 {
-			tail = tenantParts[5]
-		}
-		return tenantParts[1], tenantParts[3], tenantParts[4], tail, true
-	}
-	parts := strings.SplitN(rest, "/", 4)
-	if len(parts) < 2 || !api.ValidSlug(parts[0]) {
-		return "", "", "", "", false
-	}
-	if isAPIArea(parts[1]) {
-		if len(parts) == 3 {
-			tail = parts[2]
-		}
-		return "", parts[0], parts[1], tail, true
-	}
-	if len(parts) < 3 || !api.ValidSlug(parts[1]) || !isAPIArea(parts[2]) {
-		return "", "", "", "", false
-	}
-	if len(parts) == 4 {
-		tail = parts[3]
-	}
-	return parts[0], parts[1], parts[2], tail, true
-}
-
-func isAPIArea(area string) bool {
-	switch area {
-	case "files", "data", "uploads", "archive", "ai":
-		return true
-	default:
-		return false
-	}
-}
-
-func (a *App) dispatchAPI(w http.ResponseWriter, r *http.Request, slug, area, tail string) {
-	tenant := tenantFromContext(r.Context())
-	a.dispatchAPIForTenant(w, r, tenant.Username, slug, area, tail)
-}
-
-func (a *App) dispatchAPIForTenant(w http.ResponseWriter, r *http.Request, tenant, slug, area, tail string) {
-	switch area {
-	case "files":
-		a.handleFiles(w, r, tenant, slug)
-	case "data":
-		a.handleData(w, r, tenant, slug, tail)
-	case "uploads":
-		a.handleUpload(w, r, tenant, slug)
-	case "archive":
-		a.handleArchive(w, r, tenant, slug)
-	case "ai":
-		a.handleAI(w, r)
-	default:
-		writeError(w, http.StatusNotFound, fmt.Errorf("unknown API area"))
-	}
+	return tenant, slug, true
 }
 
 func (a *App) handleFiles(w http.ResponseWriter, r *http.Request, tenant, slug string) {

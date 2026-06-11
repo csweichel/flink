@@ -87,10 +87,10 @@ Tenant web sessions use cookies. The user CLI uses HTTP Basic Auth with tenant u
 Sites are owner-only by default. A tenant can change the hosted site's access policy with:
 
 ```sh
-flink site auth <site> owner
-flink site auth <site> none
-flink site auth <site> tenants
-flink site auth <site> tenants <tenant>...
+flink auth <site> owner
+flink auth <site> none
+flink auth <site> tenants
+flink auth <site> tenants <tenant>...
 ```
 
 `owner` is the default and allows only the publishing tenant. `none` allows anonymous viewers to load the site and use browser storage/upload/realtime/AI APIs. `tenants` allows any approved tenant when no tenant list is provided, or only the listed approved tenant usernames when a list is provided.
@@ -132,7 +132,7 @@ New sites default to owner-only access unless the server config sets:
 defaultSiteAuthMode: owner
 ```
 
-Allowed default modes are `owner`, `none`, and `tenants`. Use `flink site auth <site> tenants <tenant>...` for tenant allow-lists.
+Allowed default modes are `owner`, `none`, and `tenants`. Use `flink auth <site> tenants <tenant>...` for tenant allow-lists.
 
 ## Building Prototypes With Flink
 
@@ -155,8 +155,7 @@ When asked to build a prototype on Flink, prefer using Flink itself instead of a
 The fastest CLI loop for a tenant is:
 
 ```sh
-flink --server https://flink.internal --tenant demo --password flink site create my-prototype
-flink --server https://flink.internal --tenant demo --password flink site write my-prototype ./dist
+flink --server https://flink.internal --tenant demo --password flink publish ./dist --site my-prototype
 ```
 
 On a shared Flink server with `baseHost` and wildcard DNS configured, open the domain-based site URL:

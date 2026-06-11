@@ -81,21 +81,20 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) routes() {
-	a.mux.HandleFunc("/_flink/login", a.handleLogin)
-	a.mux.HandleFunc("/_flink/register", a.handleRegister)
-	a.mux.HandleFunc("/_flink/logout", a.handleLogout)
-	a.mux.HandleFunc("/_flink", a.requireTenant(a.dashboard))
-	a.mux.HandleFunc("/_flink/", a.requireTenant(a.dashboard))
-	a.mux.HandleFunc("/api/auth/me", a.requireTenant(a.handleMe))
-	a.mux.HandleFunc("/api/sites", a.requireTenant(a.handleSites))
-	a.mux.HandleFunc("/api/sites/", a.requireTenant(a.handleSiteAPI))
-	a.mux.HandleFunc("/api/public/", a.handlePublicAPI)
-	a.mux.HandleFunc("/llms.txt", a.handleLLMSTXT)
-	a.mux.HandleFunc("/_flink/agent-instructions", a.handleLLMSTXT)
-	a.mux.HandleFunc("/.well-known/flink.json", a.handleDiscoveryJSON)
-	a.mux.HandleFunc("/flink-logo.png", a.handleLogo)
-	a.mux.HandleFunc("/favicon.ico", a.handleLogo)
-	a.mux.HandleFunc("/flink.js", func(w http.ResponseWriter, r *http.Request) {
+	// Dashboard and discovery.
+	a.mux.HandleFunc("GET /_flink/login", a.handleLogin)
+	a.mux.HandleFunc("POST /_flink/login", a.handleLogin)
+	a.mux.HandleFunc("GET /_flink/register", a.handleRegister)
+	a.mux.HandleFunc("POST /_flink/register", a.handleRegister)
+	a.mux.HandleFunc("GET /_flink/logout", a.handleLogout)
+	a.mux.HandleFunc("GET /_flink", a.requireTenant(a.dashboard))
+	a.mux.HandleFunc("GET /_flink/", a.requireTenant(a.dashboard))
+	a.mux.HandleFunc("GET /llms.txt", a.handleLLMSTXT)
+	a.mux.HandleFunc("GET /_flink/agent-instructions", a.handleLLMSTXT)
+	a.mux.HandleFunc("GET /.well-known/flink.json", a.handleDiscoveryJSON)
+	a.mux.HandleFunc("GET /flink-logo.png", a.handleLogo)
+	a.mux.HandleFunc("GET /favicon.ico", a.handleLogo)
+	a.mux.HandleFunc("GET /flink.js", func(w http.ResponseWriter, r *http.Request) {
 		b, err := frontend.ReadClientJS()
 		if err != nil {
 			http.NotFound(w, r)
@@ -104,27 +103,94 @@ func (a *App) routes() {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		http.ServeContent(w, r, "flink.js", time.Time{}, bytes.NewReader(b))
 	})
-	a.mux.HandleFunc("/uploads/", a.handleUploadFile)
+
+	// Tenant-authenticated management API.
+	a.mux.HandleFunc("GET /api/auth/me", a.requireTenant(a.handleMe))
+	a.mux.HandleFunc("GET /api/sites", a.requireTenant(a.handleListSites))
+	a.mux.HandleFunc("POST /api/sites", a.requireTenant(a.handleCreateSite))
+	a.mux.HandleFunc("GET /api/sites/{slug}", a.requireTenant(a.handleSiteDetails))
+	a.mux.HandleFunc("DELETE /api/sites/{slug}", a.requireTenant(a.handleDeleteSite))
+	a.mux.HandleFunc("GET /api/sites/{slug}/auth", a.requireTenant(a.handleGetSiteAuth))
+	a.mux.HandleFunc("PUT /api/sites/{slug}/auth", a.requireTenant(a.handleSetSiteAuth))
+	a.mux.HandleFunc("POST /api/sites/{slug}/auth", a.requireTenant(a.handleSetSiteAuth))
+	a.mux.HandleFunc("GET /api/sites/{slug}/publishes", a.requireTenant(a.handleListPublishes))
+	a.mux.HandleFunc("POST /api/sites/{slug}/publishes", a.requireTenant(a.handleRecordPublish))
+	a.mux.HandleFunc("POST /api/sites/{slug}/rollback", a.requireTenant(a.handleRollbackPublish))
+	a.mux.HandleFunc("GET /api/sites/{slug}/files", a.requireTenant(a.handleTenantFiles))
+	a.mux.HandleFunc("PUT /api/sites/{slug}/files", a.requireTenant(a.handleTenantFiles))
+	a.mux.HandleFunc("POST /api/sites/{slug}/files", a.requireTenant(a.handleTenantFiles))
+	a.mux.HandleFunc("DELETE /api/sites/{slug}/files", a.requireTenant(a.handleTenantFiles))
+	a.mux.HandleFunc("GET /api/sites/{slug}/data/{$}", a.requireTenant(a.handleTenantData))
+	a.mux.HandleFunc("GET /api/sites/{slug}/data/{key}", a.requireTenant(a.handleTenantData))
+	a.mux.HandleFunc("PUT /api/sites/{slug}/data/{key}", a.requireTenant(a.handleTenantData))
+	a.mux.HandleFunc("POST /api/sites/{slug}/data/{key}", a.requireTenant(a.handleTenantData))
+	a.mux.HandleFunc("DELETE /api/sites/{slug}/data/{key}", a.requireTenant(a.handleTenantData))
+	a.mux.HandleFunc("GET /api/sites/{slug}/uploads", a.requireTenant(a.handleTenantUploads))
+	a.mux.HandleFunc("POST /api/sites/{slug}/uploads", a.requireTenant(a.handleTenantUploads))
+	a.mux.HandleFunc("DELETE /api/sites/{slug}/uploads", a.requireTenant(a.handleTenantUploads))
+	a.mux.HandleFunc("GET /api/sites/{slug}/archive", a.requireTenant(a.handleTenantArchive))
+	a.mux.HandleFunc("POST /api/sites/{slug}/ai", a.requireTenant(a.handleAI))
+
+	a.mux.Handle("/api/public/", http.StripPrefix("/api/public", a.publicAPIMux()))
+
+	a.mux.HandleFunc("GET /uploads/{tenant}/{slug}/{name...}", a.handleUploadFile)
 	a.mux.HandleFunc("/ws/", a.handleWS)
 	a.mux.HandleFunc("/", a.handleSite)
 }
 
+func (a *App) publicAPIMux() http.Handler {
+	mux := http.NewServeMux()
+
+	// Tenantless routes infer the tenant from the authenticated viewer.
+	mux.HandleFunc("GET /{slug}/files", a.handlePublicFiles)
+	mux.HandleFunc("PUT /{slug}/files", a.handlePublicFiles)
+	mux.HandleFunc("POST /{slug}/files", a.handlePublicFiles)
+	mux.HandleFunc("DELETE /{slug}/files", a.handlePublicFiles)
+	mux.HandleFunc("GET /{slug}/data/{$}", a.handlePublicData)
+	mux.HandleFunc("GET /{slug}/data/{key}", a.handlePublicData)
+	mux.HandleFunc("PUT /{slug}/data/{key}", a.handlePublicData)
+	mux.HandleFunc("POST /{slug}/data/{key}", a.handlePublicData)
+	mux.HandleFunc("DELETE /{slug}/data/{key}", a.handlePublicData)
+	mux.HandleFunc("GET /{slug}/uploads", a.handlePublicUploads)
+	mux.HandleFunc("POST /{slug}/uploads", a.handlePublicUploads)
+	mux.HandleFunc("DELETE /{slug}/uploads", a.handlePublicUploads)
+	mux.HandleFunc("GET /{slug}/archive", a.handlePublicArchive)
+	mux.HandleFunc("POST /{slug}/ai", a.handlePublicAI)
+
+	// Canonical tenant-qualified browser API routes.
+	mux.HandleFunc("GET /t/{tenant}/s/{slug}/files", a.handlePublicTenantFiles)
+	mux.HandleFunc("PUT /t/{tenant}/s/{slug}/files", a.handlePublicTenantFiles)
+	mux.HandleFunc("POST /t/{tenant}/s/{slug}/files", a.handlePublicTenantFiles)
+	mux.HandleFunc("DELETE /t/{tenant}/s/{slug}/files", a.handlePublicTenantFiles)
+	mux.HandleFunc("GET /t/{tenant}/s/{slug}/data/{$}", a.handlePublicTenantData)
+	mux.HandleFunc("GET /t/{tenant}/s/{slug}/data/{key}", a.handlePublicTenantData)
+	mux.HandleFunc("PUT /t/{tenant}/s/{slug}/data/{key}", a.handlePublicTenantData)
+	mux.HandleFunc("POST /t/{tenant}/s/{slug}/data/{key}", a.handlePublicTenantData)
+	mux.HandleFunc("DELETE /t/{tenant}/s/{slug}/data/{key}", a.handlePublicTenantData)
+	mux.HandleFunc("GET /t/{tenant}/s/{slug}/uploads", a.handlePublicTenantUploads)
+	mux.HandleFunc("POST /t/{tenant}/s/{slug}/uploads", a.handlePublicTenantUploads)
+	mux.HandleFunc("DELETE /t/{tenant}/s/{slug}/uploads", a.handlePublicTenantUploads)
+	mux.HandleFunc("GET /t/{tenant}/s/{slug}/archive", a.handlePublicTenantArchive)
+	mux.HandleFunc("POST /t/{tenant}/s/{slug}/ai", a.handlePublicTenantAI)
+
+	return mux
+}
+
 func (a *App) handleUploadFile(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/uploads/")
-	parts := strings.SplitN(rest, "/", 3)
-	if len(parts) != 3 || !api.ValidSlug(parts[0]) || !api.ValidSlug(parts[1]) {
+	tenant, slug, name := r.PathValue("tenant"), r.PathValue("slug"), r.PathValue("name")
+	if !api.ValidSlug(tenant) || !api.ValidSlug(slug) || name == "" {
 		http.NotFound(w, r)
 		return
 	}
-	if !a.authorizeSiteAPI(w, r, parts[0], parts[1]) {
+	if !a.authorizeSiteAPI(w, r, tenant, slug) {
 		return
 	}
-	p, err := api.CleanPath(parts[2])
+	p, err := api.CleanPath(name)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	b, err := a.store.ReadUpload(parts[0], parts[1], p)
+	b, err := a.store.ReadUpload(tenant, slug, p)
 	if err != nil {
 		http.NotFound(w, r)
 		return

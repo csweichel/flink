@@ -494,11 +494,14 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 		"github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz",
 		"Do not ask the user to clone the repository or build the CLI from source",
 		"curl -L -o flink.tar.gz https://github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz",
+		"Use a Flink template early when starting from scratch",
+		"./flink init todo ./my-site --site my-site",
 		"https://<tenant>--<site>.quick.internal/",
 		"https://demo--my-site.quick.internal/",
-		"./flink site auth my-site none",
-		"./flink site auth my-site tenants",
-		"./flink site auth my-site tenants <tenant>...",
+		"./flink publish ./dist --site my-site",
+		"./flink auth my-site none",
+		"./flink auth my-site tenants",
+		"./flink auth my-site tenants <tenant>...",
 	} {
 		if !bytes.Contains(res.Body.Bytes(), []byte(want)) {
 			t.Fatalf("llms.txt missing %q:\n%s", want, res.Body.String())
@@ -588,8 +591,9 @@ func TestLLMSTXTFallsBackToPathHostingWithoutBaseHost(t *testing.T) {
 		"Flink is a simple application server built for agents",
 		"This Flink server does not have domain-based hosting configured",
 		"https://flink.internal/t/<tenant>/s/<site>/",
-		"./flink site write my-site ./dist",
-		"./flink site auth my-site none",
+		"./flink init todo ./my-site --site my-site",
+		"./flink publish ./dist --site my-site",
+		"./flink auth my-site none",
 	} {
 		if !bytes.Contains(res.Body.Bytes(), []byte(want)) {
 			t.Fatalf("fallback llms.txt missing %q:\n%s", want, res.Body.String())

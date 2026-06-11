@@ -67,6 +67,14 @@ func siteUploadsCollection(tenant, slug string) string {
 	return "tenants/" + tenant + "/sites/" + slug + "/uploads"
 }
 
+func sitePublishesCollection(tenant, slug string) string {
+	return "tenants/" + tenant + "/sites/" + slug + "/publishes"
+}
+
+func sitePublishFilesCollection(tenant, slug, version string) string {
+	return "tenants/" + tenant + "/sites/" + slug + "/publish-files/" + version
+}
+
 func validateTenant(tenant string) error {
 	if !ValidSlug(tenant) {
 		return fmt.Errorf("invalid tenant %q", tenant)

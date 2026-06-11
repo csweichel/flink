@@ -33,11 +33,20 @@ type Store struct {
 }
 
 type SiteMeta struct {
-	Slug      string         `json:"slug"`
-	Title     string         `json:"title"`
-	Auth      SiteAuthPolicy `json:"auth"`
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
+	Slug              string         `json:"slug"`
+	Title             string         `json:"title"`
+	Auth              SiteAuthPolicy `json:"auth"`
+	CreatedAt         time.Time      `json:"createdAt"`
+	UpdatedAt         time.Time      `json:"updatedAt"`
+	CreatedBy         string         `json:"createdBy,omitempty"`
+	UpdatedBy         string         `json:"updatedBy,omitempty"`
+	LastPublishedBy   string         `json:"lastPublishedBy,omitempty"`
+	LastPublishedAt   time.Time      `json:"lastPublishedAt,omitempty"`
+	LastPublishedFrom string         `json:"lastPublishedFrom,omitempty"`
+	LastGitCommit     string         `json:"lastGitCommit,omitempty"`
+	FileCount         int            `json:"fileCount,omitempty"`
+	TotalBytes        int            `json:"totalBytes,omitempty"`
+	Capabilities      []string       `json:"capabilities,omitempty"`
 }
 
 type SiteAuthPolicy struct {
@@ -81,6 +90,33 @@ type UploadInfo struct {
 type SiteFileInfo struct {
 	Path string `json:"path"`
 	Size int    `json:"size"`
+}
+
+type SiteDetails struct {
+	Site    SiteMeta       `json:"site"`
+	Files   []SiteFileInfo `json:"files"`
+	Data    map[string]any `json:"data"`
+	Uploads []UploadInfo   `json:"uploads"`
+}
+
+type PublishFileInfo struct {
+	Path string `json:"path"`
+	Size int    `json:"size"`
+	Hash string `json:"hash"`
+}
+
+type PublishRecord struct {
+	ID           string            `json:"id,omitempty"`
+	CreatedAt    time.Time         `json:"createdAt,omitempty"`
+	Tenant       string            `json:"tenant,omitempty"`
+	Source       string            `json:"source,omitempty"`
+	GitCommit    string            `json:"gitCommit,omitempty"`
+	FileCount    int               `json:"fileCount"`
+	TotalBytes   int               `json:"totalBytes"`
+	Files        []PublishFileInfo `json:"files"`
+	Auth         SiteAuthPolicy    `json:"auth"`
+	RollbackOf   string            `json:"rollbackOf,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
 }
 
 func NewStore(backend storage.Backend, defaultIndex string) *Store {
@@ -318,10 +354,16 @@ func (s *Store) CreateSite(tenant, slug, title string) (SiteMeta, error) {
 	if mode == "" {
 		mode = SiteAuthOwner
 	}
-	meta := SiteMeta{Slug: slug, Title: title, Auth: SiteAuthPolicy{Mode: mode}, CreatedAt: now, UpdatedAt: now}
+	meta := SiteMeta{Slug: slug, Title: title, Auth: SiteAuthPolicy{Mode: mode}, CreatedAt: now, UpdatedAt: now, CreatedBy: tenant, UpdatedBy: tenant}
 	if existing, err := s.ReadMeta(tenant, slug); err == nil {
 		meta.CreatedAt = existing.CreatedAt
+		meta.CreatedBy = existing.CreatedBy
 		meta.Auth = existing.Auth
+		meta.LastPublishedBy = existing.LastPublishedBy
+		meta.LastPublishedAt = existing.LastPublishedAt
+		meta.LastPublishedFrom = existing.LastPublishedFrom
+		meta.LastGitCommit = existing.LastGitCommit
+		meta.Capabilities = existing.Capabilities
 	}
 	if _, err := s.ReadSiteFile(tenant, slug, "index.html"); errors.Is(err, ErrNotFound) {
 		if err := s.WriteSiteFile(tenant, slug, "index.html", []byte(s.defaultIndex)); err != nil {
@@ -345,7 +387,7 @@ func (s *Store) ListSites(tenant string) ([]SiteMeta, error) {
 	for _, entry := range entries {
 		var meta SiteMeta
 		if err := json.Unmarshal(entry.Value, &meta); err == nil && ValidSlug(meta.Slug) {
-			meta = normalizeSiteMeta(meta)
+			meta = s.enrichSiteMeta(tenant, normalizeSiteMeta(meta))
 			sites = append(sites, meta)
 		}
 	}
@@ -364,7 +406,7 @@ func (s *Store) DeleteSite(tenant, slug string) error {
 	if err := s.backend.Delete(ctx, siteMetaCollection(tenant), slug); err != nil {
 		return err
 	}
-	for _, collection := range []string{siteFilesCollection(tenant, slug), siteDataCollection(tenant, slug), siteUploadsCollection(tenant, slug)} {
+	for _, collection := range []string{siteFilesCollection(tenant, slug), siteDataCollection(tenant, slug), siteUploadsCollection(tenant, slug), sitePublishesCollection(tenant, slug), sitePublishFilesCollection(tenant, slug, "")} {
 		if err := s.backend.DeleteCollection(ctx, collection); err != nil {
 			return err
 		}
@@ -425,6 +467,7 @@ func (s *Store) WriteSiteFile(tenant, slug, p string, b []byte) error {
 	}
 	if meta, err := s.ReadMeta(tenant, slug); err == nil {
 		meta.UpdatedAt = time.Now().UTC()
+		meta.UpdatedBy = tenant
 		_ = s.writeMeta(tenant, meta)
 	}
 	return nil
@@ -446,6 +489,7 @@ func (s *Store) DeleteSiteFile(tenant, slug, p string) error {
 	}
 	if meta, err := s.ReadMeta(tenant, slug); err == nil {
 		meta.UpdatedAt = time.Now().UTC()
+		meta.UpdatedBy = tenant
 		_ = s.writeMeta(tenant, meta)
 	}
 	return nil
@@ -466,7 +510,30 @@ func (s *Store) ReadMeta(tenant, slug string) (SiteMeta, error) {
 	if err := json.Unmarshal(b, &meta); err != nil {
 		return meta, err
 	}
-	return normalizeSiteMeta(meta), nil
+	return s.enrichSiteMeta(tenant, normalizeSiteMeta(meta)), nil
+}
+
+func (s *Store) ReadSiteDetails(tenant, slug string) (SiteDetails, error) {
+	meta, err := s.ReadMeta(tenant, slug)
+	if err != nil {
+		return SiteDetails{}, err
+	}
+	files, err := s.ListSiteFiles(tenant, slug, "")
+	if err != nil {
+		return SiteDetails{}, err
+	}
+	data, err := s.ReadData(tenant, slug)
+	if err != nil {
+		return SiteDetails{}, err
+	}
+	uploads, err := s.ListUploads(tenant, slug)
+	if err != nil {
+		return SiteDetails{}, err
+	}
+	meta.FileCount = len(files)
+	meta.TotalBytes = totalSiteFileBytes(files)
+	meta.Capabilities = mergeCapabilities(meta.Capabilities, computeCapabilities(meta.Auth, files, data, uploads))
+	return SiteDetails{Site: meta, Files: files, Data: data, Uploads: uploads}, nil
 }
 
 func (s *Store) UpdateSiteAuth(tenant, slug string, policy SiteAuthPolicy) (SiteMeta, error) {
@@ -486,6 +553,7 @@ func (s *Store) UpdateSiteAuth(tenant, slug string, policy SiteAuthPolicy) (Site
 	}
 	meta.Auth = normalized
 	meta.UpdatedAt = time.Now().UTC()
+	meta.UpdatedBy = tenant
 	if err := s.writeMeta(tenant, meta); err != nil {
 		return SiteMeta{}, err
 	}
@@ -627,9 +695,216 @@ func (s *Store) DeleteUpload(tenant, slug, name string) error {
 	}
 	if meta, err := s.ReadMeta(tenant, slug); err == nil {
 		meta.UpdatedAt = time.Now().UTC()
+		meta.UpdatedBy = tenant
 		_ = s.writeMeta(tenant, meta)
 	}
 	return nil
+}
+
+func (s *Store) RecordPublish(tenant, slug string, record PublishRecord) (PublishRecord, error) {
+	if err := validateTenant(tenant); err != nil {
+		return PublishRecord{}, err
+	}
+	if !ValidSlug(slug) {
+		return PublishRecord{}, fmt.Errorf("invalid slug %q", slug)
+	}
+	if _, err := s.ReadMeta(tenant, slug); err != nil {
+		return PublishRecord{}, err
+	}
+	now := time.Now().UTC()
+	if record.ID == "" {
+		id, err := randomHex(4)
+		if err != nil {
+			return PublishRecord{}, err
+		}
+		record.ID = now.Format("20060102150405") + "-" + id
+	}
+	if record.CreatedAt.IsZero() {
+		record.CreatedAt = now
+	}
+	record.Tenant = tenant
+	files, err := s.ListSiteFiles(tenant, slug, "")
+	if err != nil {
+		return PublishRecord{}, err
+	}
+	if len(record.Files) == 0 {
+		record.Files = make([]PublishFileInfo, 0, len(files))
+		for _, file := range files {
+			record.Files = append(record.Files, PublishFileInfo{Path: file.Path, Size: file.Size})
+		}
+	}
+	record.FileCount = len(files)
+	record.TotalBytes = totalSiteFileBytes(files)
+	for _, file := range files {
+		b, err := s.ReadSiteFile(tenant, slug, file.Path)
+		if err != nil {
+			return PublishRecord{}, err
+		}
+		if err := s.backend.Put(context.Background(), sitePublishFilesCollection(tenant, slug, record.ID), file.Path, b); err != nil {
+			return PublishRecord{}, err
+		}
+	}
+	b, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return PublishRecord{}, err
+	}
+	if err := s.backend.Put(context.Background(), sitePublishesCollection(tenant, slug), record.ID, b); err != nil {
+		return PublishRecord{}, err
+	}
+	meta, err := s.ReadMeta(tenant, slug)
+	if err != nil {
+		return PublishRecord{}, err
+	}
+	meta.UpdatedAt = now
+	meta.UpdatedBy = tenant
+	meta.LastPublishedBy = tenant
+	meta.LastPublishedAt = record.CreatedAt
+	meta.LastPublishedFrom = record.Source
+	meta.LastGitCommit = record.GitCommit
+	meta.FileCount = record.FileCount
+	meta.TotalBytes = record.TotalBytes
+	meta.Capabilities = record.Capabilities
+	if err := s.writeMeta(tenant, meta); err != nil {
+		return PublishRecord{}, err
+	}
+	return record, nil
+}
+
+func (s *Store) ListPublishes(tenant, slug string) ([]PublishRecord, error) {
+	if err := validateTenant(tenant); err != nil {
+		return nil, err
+	}
+	if !ValidSlug(slug) {
+		return nil, fmt.Errorf("invalid slug %q", slug)
+	}
+	entries, err := s.backend.List(context.Background(), sitePublishesCollection(tenant, slug), "")
+	if err != nil {
+		return nil, err
+	}
+	records := []PublishRecord{}
+	for _, entry := range entries {
+		var record PublishRecord
+		if err := json.Unmarshal(entry.Value, &record); err == nil && record.ID != "" {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].CreatedAt.After(records[j].CreatedAt) })
+	return records, nil
+}
+
+func (s *Store) RollbackPublish(tenant, slug, version string) (PublishRecord, error) {
+	records, err := s.ListPublishes(tenant, slug)
+	if err != nil {
+		return PublishRecord{}, err
+	}
+	if len(records) == 0 {
+		return PublishRecord{}, fmt.Errorf("site %q has no publish history", slug)
+	}
+	var target PublishRecord
+	if version == "" {
+		if len(records) < 2 {
+			return PublishRecord{}, fmt.Errorf("site %q has no previous publish", slug)
+		}
+		target = records[1]
+	} else {
+		for _, record := range records {
+			if record.ID == version {
+				target = record
+				break
+			}
+		}
+		if target.ID == "" {
+			return PublishRecord{}, fmt.Errorf("publish version %q not found", version)
+		}
+	}
+	ctx := context.Background()
+	if err := s.backend.DeleteCollection(ctx, siteFilesCollection(tenant, slug)); err != nil {
+		return PublishRecord{}, err
+	}
+	snapshot, err := s.backend.List(ctx, sitePublishFilesCollection(tenant, slug, target.ID), "")
+	if err != nil {
+		return PublishRecord{}, err
+	}
+	for _, file := range snapshot {
+		if err := s.backend.Put(ctx, siteFilesCollection(tenant, slug), file.Key, file.Value); err != nil {
+			return PublishRecord{}, err
+		}
+	}
+	record := PublishRecord{
+		Source:       "rollback",
+		GitCommit:    target.GitCommit,
+		Auth:         target.Auth,
+		RollbackOf:   target.ID,
+		Capabilities: target.Capabilities,
+	}
+	return s.RecordPublish(tenant, slug, record)
+}
+
+func (s *Store) enrichSiteMeta(tenant string, meta SiteMeta) SiteMeta {
+	files, err := s.ListSiteFiles(tenant, meta.Slug, "")
+	if err == nil {
+		meta.FileCount = len(files)
+		meta.TotalBytes = totalSiteFileBytes(files)
+	}
+	data, _ := s.ReadData(tenant, meta.Slug)
+	uploads, _ := s.ListUploads(tenant, meta.Slug)
+	meta.Capabilities = mergeCapabilities(meta.Capabilities, computeCapabilities(meta.Auth, files, data, uploads))
+	return meta
+}
+
+func totalSiteFileBytes(files []SiteFileInfo) int {
+	total := 0
+	for _, file := range files {
+		total += file.Size
+	}
+	return total
+}
+
+func computeCapabilities(auth SiteAuthPolicy, files []SiteFileInfo, data map[string]any, uploads []UploadInfo) []string {
+	set := map[string]bool{}
+	if len(files) > 0 {
+		set["files"] = true
+	}
+	if len(data) > 0 {
+		set["storage"] = true
+	}
+	if len(uploads) > 0 {
+		set["uploads"] = true
+	}
+	switch auth.Mode {
+	case SiteAuthNone:
+		set["public"] = true
+	case SiteAuthTenants:
+		set["tenant-restricted"] = true
+	default:
+		set["owner-only"] = true
+	}
+	out := make([]string, 0, len(set))
+	for capability, ok := range set {
+		if ok {
+			out = append(out, capability)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func mergeCapabilities(groups ...[]string) []string {
+	set := map[string]bool{}
+	for _, group := range groups {
+		for _, capability := range group {
+			capability = strings.TrimSpace(capability)
+			if capability != "" {
+				set[capability] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for capability := range set {
+		out = append(out, capability)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *Store) setTenantStatus(username, status string) (PublicTenant, error) {

@@ -41,34 +41,37 @@ export FLINK_SERVER={{.Server}}
 export FLINK_TENANT=<tenant>
 export FLINK_PASSWORD=<password>
 
+Use a Flink template early when starting from scratch. Templates create a usable static prototype with the browser SDK already wired in, which is faster and safer than beginning from an empty file:
+
+./flink init todo ./my-site --site my-site
+
 Deployment flow:
 
 1. Build the app into static files if it has a build step.
-2. Create the site if it does not already exist.
-3. Publish either the build directory or the single HTML file.
-4. Open the live URL and verify the app works.
+2. If starting from scratch, create a template with `flink init <template>`.
+3. Publish either the build directory or the single HTML file with `flink publish`.
+4. Change site access with `flink auth` if the user wants to share it.
+5. Use the URL printed by the CLI to verify the app.
 
 Publish a built app or static directory:
 
-./flink site create my-site
-./flink site write my-site ./dist
+./flink publish ./dist --site my-site
 
 Publish a single-page HTML prototype:
 
-./flink site create my-site
-./flink site write my-site ./index.html index.html
+./flink publish ./index.html --site my-site
 
 Site access uses this server's default site auth mode when created. To make a site visible without signing in, run:
 
-./flink site auth my-site none
+./flink auth my-site none
 
 To require any approved tenant login, run:
 
-./flink site auth my-site tenants
+./flink auth my-site tenants
 
 To restrict to specific tenants, run:
 
-./flink site auth my-site tenants <tenant>...
+./flink auth my-site tenants <tenant>...
 
 For multi-file websites, publish a directory. Paths are preserved under the same {{if .DomainHosting}}domain{{else}}site base{{end}}:
 
@@ -80,4 +83,4 @@ Hosted sites can use Flink backend APIs by importing:
 
 <script src="/flink.js"></script>
 
-Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend. Keep the first deployed version usable, then iterate by publishing updated files with the same site write command.
+Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend. Keep the first deployed version usable, then iterate by running `./flink publish` again for the same site.
