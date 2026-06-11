@@ -12,6 +12,7 @@ import (
 	"github.com/csweichel/flink/server/api"
 	"github.com/csweichel/flink/server/storage"
 	"github.com/csweichel/flink/shared/banner"
+	bolt "go.etcd.io/bbolt"
 )
 
 func runCommand(args ...string) (string, error) {
@@ -171,6 +172,35 @@ func TestRunTenantsBootstrapCreatesApprovedTenant(t *testing.T) {
 	}
 	if tenant.Username != "demo" || tenant.Status != api.TenantApproved {
 		t.Fatalf("unexpected tenant: %#v", tenant)
+	}
+}
+
+func TestTenantStoreInitErrorExplainsBoltTimeout(t *testing.T) {
+	cfg := defaultServerConfig()
+	cfg.StorageDriver = "bbolt"
+
+	err := tenantStoreInitError(cfg, bolt.ErrTimeout)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "stop any running flink server instance") {
+		t.Fatalf("expected actionable bbolt timeout message, got %q", err.Error())
+	}
+	if !errors.Is(err, bolt.ErrTimeout) {
+		t.Fatalf("expected wrapped bolt timeout, got %v", err)
+	}
+}
+
+func TestTenantStoreInitErrorLeavesOtherBackendsAlone(t *testing.T) {
+	cfg := defaultServerConfig()
+	cfg.StorageDriver = "file"
+
+	err := tenantStoreInitError(cfg, bolt.ErrTimeout)
+	if !errors.Is(err, bolt.ErrTimeout) {
+		t.Fatalf("expected original timeout, got %v", err)
+	}
+	if strings.Contains(err.Error(), "stop any running flink server instance") {
+		t.Fatalf("did not expect bbolt guidance for file backend, got %q", err.Error())
 	}
 }
 

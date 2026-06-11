@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/csweichel/flink/server/api"
 	"github.com/csweichel/flink/server/storage"
+	bolt "go.etcd.io/bbolt"
 )
 
 func withTenantStore(configPath string, fn func(*api.Store) error) error {
@@ -21,10 +23,21 @@ func withTenantStore(configPath string, fn func(*api.Store) error) error {
 		return err
 	}
 	if err := backend.Init(context.Background()); err != nil {
-		return err
+		return tenantStoreInitError(cfg, err)
 	}
 	defer backend.Close()
 	return fn(api.NewStore(backend, ""))
+}
+
+func tenantStoreInitError(cfg serverConfig, err error) error {
+	if isBoltStorage(cfg.StorageDriver) && errors.Is(err, bolt.ErrTimeout) {
+		return fmt.Errorf("%w: bbolt storage is locked; stop any running flink server instance before using this command right now", err)
+	}
+	return err
+}
+
+func isBoltStorage(driver string) bool {
+	return driver == "bbolt" || driver == "bolt"
 }
 
 func printTenants(out io.Writer, store *api.Store, status string) error {
