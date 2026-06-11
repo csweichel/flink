@@ -232,6 +232,15 @@ func TestTenantRegistrationCanBeDisabled(t *testing.T) {
 	if bytes.Contains(res.Body.Bytes(), []byte("/_flink/register")) || bytes.Contains(res.Body.Bytes(), []byte("Request a tenant account")) {
 		t.Fatalf("login should not link to tenant registration:\n%s", res.Body.String())
 	}
+	if bytes.Contains(res.Body.Bytes(), []byte("Back to sign in")) {
+		t.Fatalf("login should not link back to itself:\n%s", res.Body.String())
+	}
+	if bytes.Contains(res.Body.Bytes(), []byte("GitHub repo")) {
+		t.Fatalf("login should not show the old inline GitHub repo link:\n%s", res.Body.String())
+	}
+	if !bytes.Contains(res.Body.Bytes(), []byte("Made with ❤️ by")) || !bytes.Contains(res.Body.Bytes(), []byte("https://csweichel.de")) || !bytes.Contains(res.Body.Bytes(), []byte("https://github.com/csweichel/flink")) {
+		t.Fatalf("login should show the footer with author and GitHub links:\n%s", res.Body.String())
+	}
 
 	res = rawRequest(t, a, http.MethodGet, "/_flink/register", nil, "")
 	if res.Code != http.StatusNotFound {
@@ -463,8 +472,12 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 		t.Fatalf("llms.txt not served publicly: status=%d content-type=%q", res.Code, res.Header().Get("Content-Type"))
 	}
 	for _, want := range []string{
+		"Flink is a simple application server built for agents",
+		"If a user asks you to publish or deploy a prototype app to this server",
+		"Deployment flow:",
 		"github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz",
 		"Do not ask the user to clone the repository or build the CLI from source",
+		"curl -L -o flink.tar.gz https://github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz",
 		"https://<tenant>--<site>.quick.internal/",
 		"https://demo--my-site.quick.internal/",
 		"./flink site auth my-site none",
@@ -479,6 +492,19 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 		t.Fatalf("domain-configured llms.txt should not mention path-based hosting:\n%s", res.Body.String())
 	}
 
+	res = rawRequest(t, a, http.MethodGet, "/", nil, "")
+	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "text/plain; charset=utf-8" || !bytes.Contains(res.Body.Bytes(), []byte("Flink agent instructions")) {
+		t.Fatalf("bare curl root should receive agent instructions: status=%d content-type=%q body=%s", res.Code, res.Header().Get("Content-Type"), res.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept", "text/html")
+	res = httptest.NewRecorder()
+	a.ServeHTTP(res, req)
+	if res.Code != http.StatusSeeOther || res.Header().Get("Location") != "/_flink" {
+		t.Fatalf("browser root should redirect to dashboard: status=%d location=%q", res.Code, res.Header().Get("Location"))
+	}
+
 	wantLogo, err := frontend.ReadLogoPNG()
 	if err != nil {
 		t.Fatal(err)
@@ -489,8 +515,8 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 	}
 
 	res = rawRequest(t, a, http.MethodGet, "/_flink/login", nil, "")
-	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`/flink-logo.png`)) {
-		t.Fatalf("login should reference logo: %d %s", res.Code, res.Body.String())
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`/flink-logo.png`)) || !bytes.Contains(res.Body.Bytes(), []byte(`Made with ❤️ by`)) || bytes.Contains(res.Body.Bytes(), []byte(`GitHub repo`)) {
+		t.Fatalf("login should reference logo and footer: %d %s", res.Code, res.Body.String())
 	}
 }
 
@@ -505,6 +531,7 @@ func TestLLMSTXTFallsBackToPathHostingWithoutBaseHost(t *testing.T) {
 		t.Fatalf("llms.txt not served publicly: status=%d content-type=%q", res.Code, res.Header().Get("Content-Type"))
 	}
 	for _, want := range []string{
+		"Flink is a simple application server built for agents",
 		"This Flink server does not have domain-based hosting configured",
 		"https://flink.internal/t/<tenant>/s/<site>/",
 		"./flink site write my-site ./dist",

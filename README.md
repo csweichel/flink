@@ -1,8 +1,8 @@
 # Flink
 
-Flink is a small internal platform for hosting live HTML/TypeScript prototypes and simple websites. It gives every approved tenant a dashboard, instant site hosting, a user CLI, browser-callable storage APIs, uploads, realtime rooms, and optional AI calls.
+Flink is a simple application server built for agents that need to turn prototype apps and single-page apps into live internal URLs. It gives every approved tenant instant site hosting, a user CLI, browser-callable storage APIs, uploads, realtime rooms, optional AI calls, and a small dashboard for inspecting what was published.
 
-Use Flink when you want to go from `index.html` to a live shareable internal URL without setting up a backend, database, object storage bucket, or websocket service.
+Use Flink when you want to tell your coding agent: "publish this prototype to my Flink server." The agent can build static files, publish them with the `flink` CLI, use Flink's built-in APIs instead of creating a backend, and verify the deployed app at its live URL.
 
 ## Contents
 
@@ -136,6 +136,8 @@ bin/flink site write hello ./index.html
 ```
 
 ## Guidance For AI Agents Building Sites
+
+Flink is designed so the human does not need to learn a deployment workflow before seeing a prototype. Give the agent a Flink server URL, tenant username, and tenant password, then ask it to publish the prototype app or single-page app to Flink. The agent should use the CLI, publish static files, and test the live URL it receives.
 
 When an agent is asked to build and deploy a Flink-hosted website:
 

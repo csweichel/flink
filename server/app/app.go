@@ -111,6 +111,10 @@ func (a *App) routes() {
 }
 
 func (a *App) handleLLMSTXT(w http.ResponseWriter, r *http.Request) {
+	a.serveLLMSTXT(w, r)
+}
+
+func (a *App) serveLLMSTXT(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	http.ServeContent(w, r, "llms.txt", time.Time{}, strings.NewReader(a.llmsTXT(r)))
 }
@@ -120,9 +124,19 @@ func (a *App) llmsTXT(r *http.Request) string {
 	cliBase := "https://github.com/csweichel/flink/releases/latest/download/"
 	if a.baseHost != "" {
 		baseHost := a.baseHost
-		return fmt.Sprintf(`# Flink
+		return fmt.Sprintf(`# Flink agent instructions
 
-This Flink server hosts tenant-scoped websites on domain-based URLs.
+You are looking at a Flink server. Flink is a simple application server built for agents to publish prototype apps and single-page apps as live static websites with built-in browser APIs for JSON storage, uploads, realtime rooms, and optional AI calls.
+
+If a user asks you to publish or deploy a prototype app to this server, do the work yourself with the Flink CLI. Do not ask the user to clone this repository, build Flink, choose infrastructure, or set up a separate backend.
+
+Inputs you need:
+
+- FLINK_SERVER: %s
+- FLINK_TENANT: the tenant username
+- FLINK_PASSWORD: the tenant password
+- site name: a lowercase slug such as my-site
+- files to publish: usually ./dist for a built app, or ./index.html for a single-file prototype
 
 Use this exact URL pattern for published websites:
 https://<tenant>--<site>.%s/
@@ -138,18 +152,28 @@ Download the Flink CLI from GitHub Releases. Do not ask the user to clone the re
 - macOS amd64: %sflink_darwin_amd64.tar.gz
 - macOS arm64: %sflink_darwin_arm64.tar.gz
 
-Configure the CLI with this server:
+Install and configure the CLI:
+
+curl -L -o flink.tar.gz %sflink_linux_amd64.tar.gz
+tar -xzf flink.tar.gz
 
 export FLINK_SERVER=%s
 export FLINK_TENANT=<tenant>
 export FLINK_PASSWORD=<password>
 
-Publish a built website:
+Deployment flow:
+
+1. Build the app into static files if it has a build step.
+2. Create the site if it does not already exist.
+3. Publish either the build directory or the single HTML file.
+4. Open the live URL and verify the app works.
+
+Publish a built app or static directory:
 
 ./flink site create my-site
 ./flink site write my-site ./dist
 
-Publish a single HTML file:
+Publish a single-page HTML prototype:
 
 ./flink site create my-site
 ./flink site write my-site ./index.html index.html
@@ -176,12 +200,24 @@ Hosted sites can use Flink backend APIs by importing:
 
 <script src="/flink.js"></script>
 
-Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend.
-`, baseHost, baseHost, cliBase, cliBase, cliBase, cliBase, origin, baseHost, baseHost, baseHost)
+Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend. Keep the first deployed version usable, then iterate by publishing updated files with the same site write command.
+`, origin, baseHost, baseHost, cliBase, cliBase, cliBase, cliBase, cliBase, origin, baseHost, baseHost, baseHost)
 	}
-	return fmt.Sprintf(`# Flink
+	return fmt.Sprintf(`# Flink agent instructions
+
+You are looking at a Flink server. Flink is a simple application server built for agents to publish prototype apps and single-page apps as live static websites with built-in browser APIs for JSON storage, uploads, realtime rooms, and optional AI calls.
+
+If a user asks you to publish or deploy a prototype app to this server, do the work yourself with the Flink CLI. Do not ask the user to clone this repository, build Flink, choose infrastructure, or set up a separate backend.
 
 This Flink server does not have domain-based hosting configured, so use path-based tenant URLs.
+
+Inputs you need:
+
+- FLINK_SERVER: %s
+- FLINK_TENANT: the tenant username
+- FLINK_PASSWORD: the tenant password
+- site name: a lowercase slug such as my-site
+- files to publish: usually ./dist for a built app, or ./index.html for a single-file prototype
 
 Use this exact URL pattern for published websites:
 %s/t/<tenant>/s/<site>/
@@ -193,18 +229,28 @@ Download the Flink CLI from GitHub Releases. Do not ask the user to clone the re
 - macOS amd64: %sflink_darwin_amd64.tar.gz
 - macOS arm64: %sflink_darwin_arm64.tar.gz
 
-Configure the CLI with this server:
+Install and configure the CLI:
+
+curl -L -o flink.tar.gz %sflink_linux_amd64.tar.gz
+tar -xzf flink.tar.gz
 
 export FLINK_SERVER=%s
 export FLINK_TENANT=<tenant>
 export FLINK_PASSWORD=<password>
 
-Publish a built website:
+Deployment flow:
+
+1. Build the app into static files if it has a build step.
+2. Create the site if it does not already exist.
+3. Publish either the build directory or the single HTML file.
+4. Open the live URL and verify the app works.
+
+Publish a built app or static directory:
 
 ./flink site create my-site
 ./flink site write my-site ./dist
 
-Publish a single HTML file:
+Publish a single-page HTML prototype:
 
 ./flink site create my-site
 ./flink site write my-site ./index.html index.html
@@ -231,8 +277,8 @@ Hosted sites can use Flink backend APIs by importing:
 
 <script src="/flink.js"></script>
 
-Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend.
-`, origin, cliBase, cliBase, cliBase, cliBase, origin, origin, origin, origin)
+Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend. Keep the first deployed version usable, then iterate by publishing updated files with the same site write command.
+`, origin, origin, cliBase, cliBase, cliBase, cliBase, cliBase, origin, origin, origin, origin)
 }
 
 func requestOrigin(r *http.Request) string {
@@ -417,18 +463,21 @@ func pendingHTML(username string) string {
 }
 
 func authHTML(title, action, button, message string, showRegister bool) string {
-	extra := `<p><a href="/_flink/register">Request a tenant account</a></p>`
-	if !showRegister {
+	extra := ""
+	if action == "/_flink/login" && showRegister {
+		extra = `<p><a href="/_flink/register">Request a tenant account</a></p>`
+	}
+	if action == "/_flink/register" {
 		extra = `<p><a href="/_flink/login">Back to sign in</a></p>`
 	}
 	if message != "" {
 		message = `<p class="error">` + html.EscapeString(message) + `</p>`
 	}
-	return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Flink ` + title + `</title><link rel="icon" type="image/png" href="/flink-logo.png">` + authCSS() + `</head><body><main><form method="post" action="` + action + `"><img class="logo" src="/flink-logo.png" alt="Flink"><h1>Flink</h1><h2>` + title + `</h2>` + message + `<input name="username" autocomplete="username" placeholder="tenant" pattern="[a-z0-9-]+" autofocus required><input name="password" type="password" autocomplete="current-password" placeholder="password" required><button>` + button + `</button>` + extra + `</form></main></body></html>`
+	return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Flink ` + title + `</title><link rel="icon" type="image/png" href="/flink-logo.png">` + authCSS() + `</head><body><main><form method="post" action="` + action + `"><img class="logo" src="/flink-logo.png" alt="Flink"><h1>Flink</h1><h2>` + title + `</h2>` + message + `<input name="username" autocomplete="username" placeholder="tenant" pattern="[a-z0-9-]+" autofocus required><input name="password" type="password" autocomplete="current-password" placeholder="password" required><button>` + button + `</button>` + extra + `</form></main><footer>Made with ❤️ by <a href="https://csweichel.de" rel="noreferrer">csweichel.de</a> - find it on <a href="https://github.com/csweichel/flink" rel="noreferrer">GitHub</a></footer></body></html>`
 }
 
 func authCSS() string {
-	return `<style>body{font-family:ui-sans-serif,system-ui,sans-serif;margin:0;display:grid;min-height:100vh;place-items:center;background:#f7f7f4;color:#171717}main,form{width:min(380px,calc(100vw - 32px));display:grid;gap:12px}.logo{width:112px;height:112px;object-fit:contain;display:block;margin:0 0 4px}h1,h2,p{margin:0}h1{font-size:28px}h2{font-size:16px;font-weight:600;color:#525252}input,button{font:inherit;padding:12px 14px;border:1px solid #c9c9c2;border-radius:6px}button{background:#151515;color:white;cursor:pointer}.error{color:#b91c1c}a{color:#0f766e}</style>`
+	return `<style>body{font-family:ui-sans-serif,system-ui,sans-serif;margin:0;display:grid;min-height:100vh;place-items:center;background:#f7f7f4;color:#171717}main,form{width:min(380px,calc(100vw - 32px));display:grid;gap:12px}.logo{width:112px;height:112px;object-fit:contain;display:block;margin:0 0 4px}h1,h2,p{margin:0}h1{font-size:28px}h2{font-size:16px;font-weight:600;color:#525252}input,button{font:inherit;padding:12px 14px;border:1px solid #c9c9c2;border-radius:6px}button{background:#151515;color:white;cursor:pointer}.error{color:#b91c1c}footer{position:fixed;left:16px;right:16px;bottom:18px;text-align:center;font-size:13px;color:#737373}a{color:#0f766e}</style>`
 }
 
 func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -905,6 +954,10 @@ func (a *App) handleSite(w http.ResponseWriter, r *http.Request) {
 	}
 	tenant, slug, sitePath := a.resolveSite(r, defaultTenant)
 	if slug == "" {
+		if r.Method == http.MethodGet && r.URL.Path == "/" && !wantsHTML(r) {
+			a.serveLLMSTXT(w, r)
+			return
+		}
 		http.Redirect(w, r, "/_flink", http.StatusSeeOther)
 		return
 	}
