@@ -1,0 +1,83 @@
+# Flink agent instructions
+
+You are looking at a Flink server. Flink is a simple application server built for agents to publish prototype apps and single-page apps as live static websites with built-in browser APIs for JSON storage, uploads, realtime rooms, and optional AI calls.
+
+If a user asks you to publish or deploy a prototype app to this server, do the work yourself with the Flink CLI. Do not ask the user to clone this repository, build Flink, choose infrastructure, or set up a separate backend.
+{{if not .DomainHosting}}
+
+This Flink server does not have domain-based hosting configured, so use path-based tenant URLs.
+{{end}}
+
+Inputs you need:
+
+- FLINK_SERVER: {{.Origin}}
+- FLINK_TENANT: the tenant username
+- FLINK_PASSWORD: the tenant password
+- site name: a lowercase slug such as my-site
+- files to publish: usually ./dist for a built app, or ./index.html for a single-file prototype
+
+Use this exact URL pattern for published websites:
+{{.SiteURLPattern}}
+{{if .DomainHosting}}
+
+For example, tenant demo and site my-site will be available at:
+
+https://demo--my-site.{{.BaseHost}}/
+{{end}}
+
+Download the Flink CLI from GitHub Releases. Do not ask the user to clone the repository or build the CLI from source.
+
+- Linux amd64: {{.CLIBase}}flink_linux_amd64.tar.gz
+- Linux arm64: {{.CLIBase}}flink_linux_arm64.tar.gz
+- macOS amd64: {{.CLIBase}}flink_darwin_amd64.tar.gz
+- macOS arm64: {{.CLIBase}}flink_darwin_arm64.tar.gz
+
+Install and configure the CLI:
+
+curl -L -o flink.tar.gz {{.CLIBase}}flink_linux_amd64.tar.gz
+tar -xzf flink.tar.gz
+
+export FLINK_SERVER={{.Origin}}
+export FLINK_TENANT=<tenant>
+export FLINK_PASSWORD=<password>
+
+Deployment flow:
+
+1. Build the app into static files if it has a build step.
+2. Create the site if it does not already exist.
+3. Publish either the build directory or the single HTML file.
+4. Open the live URL and verify the app works.
+
+Publish a built app or static directory:
+
+./flink site create my-site
+./flink site write my-site ./dist
+
+Publish a single-page HTML prototype:
+
+./flink site create my-site
+./flink site write my-site ./index.html index.html
+
+Site access uses this server's default site auth mode when created. To make a site visible without signing in, run:
+
+./flink site auth my-site none
+
+To require any approved tenant login, run:
+
+./flink site auth my-site tenants
+
+To restrict to specific tenants, run:
+
+./flink site auth my-site tenants <tenant>...
+
+For multi-file websites, publish a directory. Paths are preserved under the same {{if .DomainHosting}}domain{{else}}site base{{end}}:
+
+- ./dist/index.html -> {{.IndexURL}}
+- ./dist/assets/app.css -> {{.AssetURL}}
+- ./dist/docs/index.html -> {{.DocsURL}}
+
+Hosted sites can use Flink backend APIs by importing:
+
+<script src="/flink.js"></script>
+
+Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend. Keep the first deployed version usable, then iterate by publishing updated files with the same site write command.

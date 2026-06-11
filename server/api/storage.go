@@ -2,29 +2,19 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"path"
 	"path/filepath"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/csweichel/flink/server/storage"
 )
 
-var (
-	slugRe      = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-	ErrNotFound = storage.ErrNotFound
-)
+var ErrNotFound = storage.ErrNotFound
 
 const (
 	TenantPending  = "pending"
@@ -34,8 +24,6 @@ const (
 	SiteAuthNone    = "none"
 	SiteAuthOwner   = "owner"
 	SiteAuthTenants = "tenants"
-
-	passwordHashIterations = 60000
 )
 
 type Store struct {
@@ -97,10 +85,6 @@ type SiteFileInfo struct {
 
 func NewStore(backend storage.Backend, defaultIndex string) *Store {
 	return &Store{backend: backend, defaultIndex: defaultIndex, defaultSiteAuthMode: SiteAuthOwner}
-}
-
-func (s *Store) Init() error {
-	return nil
 }
 
 func (s *Store) SetDefaultSiteAuthMode(mode string) error {
@@ -263,7 +247,10 @@ func (s *Store) CreateSession(username string, ttl time.Duration) (Session, erro
 	if !ValidSlug(username) {
 		return Session{}, fmt.Errorf("invalid username %q", username)
 	}
-	token := randomID() + randomID()
+	token, err := randomHex(16)
+	if err != nil {
+		return Session{}, err
+	}
 	now := time.Now().UTC()
 	session := Session{
 		Token:     token,
@@ -327,7 +314,11 @@ func (s *Store) CreateSite(tenant, slug, title string) (SiteMeta, error) {
 		return SiteMeta{}, fmt.Errorf("invalid slug %q: use lowercase letters, numbers, and dashes", slug)
 	}
 	now := time.Now().UTC()
-	meta := SiteMeta{Slug: slug, Title: title, Auth: s.defaultSiteAuthPolicy(), CreatedAt: now, UpdatedAt: now}
+	mode := strings.TrimSpace(s.defaultSiteAuthMode)
+	if mode == "" {
+		mode = SiteAuthOwner
+	}
+	meta := SiteMeta{Slug: slug, Title: title, Auth: SiteAuthPolicy{Mode: mode}, CreatedAt: now, UpdatedAt: now}
 	if existing, err := s.ReadMeta(tenant, slug); err == nil {
 		meta.CreatedAt = existing.CreatedAt
 		meta.Auth = existing.Auth
@@ -354,7 +345,7 @@ func (s *Store) ListSites(tenant string) ([]SiteMeta, error) {
 	for _, entry := range entries {
 		var meta SiteMeta
 		if err := json.Unmarshal(entry.Value, &meta); err == nil && ValidSlug(meta.Slug) {
-			meta = normalizeSiteMeta(tenant, meta)
+			meta = normalizeSiteMeta(meta)
 			sites = append(sites, meta)
 		}
 	}
@@ -475,7 +466,7 @@ func (s *Store) ReadMeta(tenant, slug string) (SiteMeta, error) {
 	if err := json.Unmarshal(b, &meta); err != nil {
 		return meta, err
 	}
-	return normalizeSiteMeta(tenant, meta), nil
+	return normalizeSiteMeta(meta), nil
 }
 
 func (s *Store) UpdateSiteAuth(tenant, slug string, policy SiteAuthPolicy) (SiteMeta, error) {
@@ -489,7 +480,7 @@ func (s *Store) UpdateSiteAuth(tenant, slug string, policy SiteAuthPolicy) (Site
 	if err != nil {
 		return SiteMeta{}, err
 	}
-	normalized, err := normalizeSiteAuthPolicy(tenant, policy)
+	normalized, err := normalizeSiteAuthPolicy(policy)
 	if err != nil {
 		return SiteMeta{}, err
 	}
@@ -572,7 +563,11 @@ func (s *Store) SaveUpload(tenant, slug, originalName string, r io.Reader) (Uplo
 	if err != nil {
 		return Upload{}, err
 	}
-	name := randomID() + filepath.Ext(originalName)
+	id, err := randomHex(8)
+	if err != nil {
+		return Upload{}, err
+	}
+	name := id + filepath.Ext(originalName)
 	if err := s.backend.Put(context.Background(), siteUploadsCollection(tenant, slug), name, b); err != nil {
 		return Upload{}, err
 	}
@@ -659,7 +654,7 @@ func (s *Store) writeTenant(meta TenantMeta) error {
 }
 
 func (s *Store) writeMeta(tenant string, meta SiteMeta) error {
-	meta = normalizeSiteMeta(tenant, meta)
+	meta = normalizeSiteMeta(meta)
 	b, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err
@@ -667,97 +662,6 @@ func (s *Store) writeMeta(tenant string, meta SiteMeta) error {
 	return s.backend.Put(context.Background(), siteMetaCollection(tenant), meta.Slug, b)
 }
 
-func (p SiteAuthPolicy) Allows(ownerTenant, username string, authenticated bool) bool {
-	switch p.Mode {
-	case SiteAuthNone:
-		return true
-	case SiteAuthOwner:
-		return authenticated && username == ownerTenant
-	case SiteAuthTenants:
-		if !authenticated {
-			return false
-		}
-		if len(p.Tenants) == 0 {
-			return true
-		}
-		for _, tenant := range p.Tenants {
-			if tenant == username {
-				return true
-			}
-		}
-		return false
-	default:
-		return false
-	}
-}
-
-func defaultSiteAuthPolicy(ownerTenant string) SiteAuthPolicy {
-	return SiteAuthPolicy{Mode: SiteAuthOwner}
-}
-
-func (s *Store) defaultSiteAuthPolicy() SiteAuthPolicy {
-	mode := strings.TrimSpace(s.defaultSiteAuthMode)
-	if mode == "" {
-		mode = SiteAuthOwner
-	}
-	return SiteAuthPolicy{Mode: mode}
-}
-
-func normalizeSiteMeta(ownerTenant string, meta SiteMeta) SiteMeta {
-	policy, err := normalizeSiteAuthPolicy(ownerTenant, meta.Auth)
-	if err != nil {
-		policy = defaultSiteAuthPolicy(ownerTenant)
-	}
-	meta.Auth = policy
-	return meta
-}
-
-func normalizeSiteAuthPolicy(ownerTenant string, policy SiteAuthPolicy) (SiteAuthPolicy, error) {
-	mode := strings.ToLower(strings.TrimSpace(policy.Mode))
-	if mode == "" {
-		return defaultSiteAuthPolicy(ownerTenant), nil
-	}
-	switch mode {
-	case SiteAuthNone:
-		return SiteAuthPolicy{Mode: SiteAuthNone}, nil
-	case SiteAuthOwner:
-		return SiteAuthPolicy{Mode: SiteAuthOwner}, nil
-	case SiteAuthTenants:
-		tenants, err := normalizeSiteAuthTenants(policy.Tenants)
-		if err != nil {
-			return SiteAuthPolicy{}, err
-		}
-		return SiteAuthPolicy{Mode: SiteAuthTenants, Tenants: tenants}, nil
-	default:
-		return SiteAuthPolicy{}, fmt.Errorf("invalid auth mode %q", policy.Mode)
-	}
-}
-
-func normalizeSiteAuthTenants(raw []string) ([]string, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	seen := map[string]bool{}
-	tenants := []string{}
-	for _, tenant := range raw {
-		tenant = strings.ToLower(strings.TrimSpace(tenant))
-		if tenant == "" {
-			continue
-		}
-		if !ValidSlug(tenant) {
-			return nil, fmt.Errorf("invalid tenant %q", tenant)
-		}
-		if !seen[tenant] {
-			seen[tenant] = true
-			tenants = append(tenants, tenant)
-		}
-	}
-	sort.Strings(tenants)
-	if len(tenants) == 0 {
-		return nil, nil
-	}
-	return tenants, nil
-}
 func (t TenantMeta) Public() PublicTenant {
 	return PublicTenant{
 		Username:  t.Username,
@@ -765,122 +669,4 @@ func (t TenantMeta) Public() PublicTenant {
 		CreatedAt: t.CreatedAt,
 		UpdatedAt: t.UpdatedAt,
 	}
-}
-
-func ValidSlug(slug string) bool {
-	return slugRe.MatchString(slug)
-}
-
-func CleanPath(p string) (string, error) {
-	p = strings.TrimPrefix(p, "/")
-	if p == "" {
-		p = "index.html"
-	}
-	for _, part := range strings.Split(p, "/") {
-		if part == ".." {
-			return "", fmt.Errorf("invalid path")
-		}
-	}
-	return strings.TrimPrefix(path.Clean("/"+p), "/"), nil
-}
-
-func CleanPrefix(p string) (string, error) {
-	p = strings.TrimPrefix(p, "/")
-	if p == "" {
-		return "", nil
-	}
-	for _, part := range strings.Split(p, "/") {
-		if part == ".." {
-			return "", fmt.Errorf("invalid path")
-		}
-	}
-	clean := strings.TrimPrefix(path.Clean("/"+p), "/")
-	if clean == "." {
-		return "", nil
-	}
-	if strings.HasSuffix(p, "/") && clean != "" {
-		clean += "/"
-	}
-	return clean, nil
-}
-
-const (
-	tenantCollection  = "flink/tenants"
-	sessionCollection = "flink/sessions"
-)
-
-func siteMetaCollection(tenant string) string {
-	return "tenants/" + tenant + "/site-meta"
-}
-
-func siteFilesCollection(tenant, slug string) string {
-	return "tenants/" + tenant + "/sites/" + slug + "/files"
-}
-
-func siteDataCollection(tenant, slug string) string {
-	return "tenants/" + tenant + "/sites/" + slug + "/data"
-}
-
-func siteUploadsCollection(tenant, slug string) string {
-	return "tenants/" + tenant + "/sites/" + slug + "/uploads"
-}
-
-func validateTenant(tenant string) error {
-	if !ValidSlug(tenant) {
-		return fmt.Errorf("invalid tenant %q", tenant)
-	}
-	return nil
-}
-
-func randomID() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(b[:])
-}
-
-func hashPassword(password string) (string, error) {
-	var salt [16]byte
-	if _, err := rand.Read(salt[:]); err != nil {
-		return "", err
-	}
-	sum := derivePasswordHash(password, salt[:], passwordHashIterations)
-	return fmt.Sprintf("v1$%d$%s$%s", passwordHashIterations, hex.EncodeToString(salt[:]), hex.EncodeToString(sum)), nil
-}
-
-func verifyPassword(encoded, password string) bool {
-	parts := strings.Split(encoded, "$")
-	if len(parts) != 4 || parts[0] != "v1" {
-		return false
-	}
-	iterations, err := strconv.Atoi(parts[1])
-	if err != nil || iterations <= 0 {
-		return false
-	}
-	salt, err := hex.DecodeString(parts[2])
-	if err != nil {
-		return false
-	}
-	want, err := hex.DecodeString(parts[3])
-	if err != nil {
-		return false
-	}
-	got := derivePasswordHash(password, salt, iterations)
-	return subtle.ConstantTimeCompare(got, want) == 1
-}
-
-func derivePasswordHash(password string, salt []byte, iterations int) []byte {
-	h := sha256.New()
-	_, _ = h.Write(salt)
-	_, _ = h.Write([]byte(password))
-	sum := h.Sum(nil)
-	for i := 1; i < iterations; i++ {
-		h.Reset()
-		_, _ = h.Write(sum)
-		_, _ = h.Write(salt)
-		_, _ = h.Write([]byte(password))
-		sum = h.Sum(nil)
-	}
-	return sum
 }
