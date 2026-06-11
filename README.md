@@ -4,6 +4,23 @@ Flink is a small internal platform for hosting live HTML/TypeScript prototypes a
 
 Use Flink when you want to go from `index.html` to a live shareable internal URL without setting up a backend, database, object storage bucket, or websocket service.
 
+## Contents
+
+- [Use Flink To Host A Website](#use-flink-to-host-a-website)
+- [Publish With The User CLI](#publish-with-the-user-cli)
+- [Guidance For AI Agents Building Sites](#guidance-for-ai-agents-building-sites)
+- [Browser APIs For Hosted Sites](#browser-apis-for-hosted-sites)
+- [Host A Flink Server](#host-a-flink-server)
+  - [Docker](#docker)
+  - [User Systemd](#user-systemd)
+  - [Tunnels And Private Exposure](#tunnels-and-private-exposure)
+- [Tenant Administration](#tenant-administration)
+- [Storage](#storage)
+- [Ona Development Environment](#ona-development-environment)
+- [Repository Layout](#repository-layout)
+- [Build And Test](#build-and-test)
+- [Release](#release)
+
 ## Use Flink To Host A Website
 
 You need three things from your Flink server operator:
@@ -241,14 +258,6 @@ Edit `flink-data/flink.yaml` to set `baseHost`, storage, tenant registration, de
 docker restart flink
 ```
 
-Use a reverse proxy that routes both the base domain and wildcard subdomains to the container port:
-
-```caddyfile
-flink.internal, *.flink.internal {
-  reverse_proxy 127.0.0.1:8080
-}
-```
-
 ### User Systemd
 
 Install or update it as the current Unix user:
@@ -331,14 +340,6 @@ If the server should start at boot without an active login session, enable linge
 loginctl enable-linger "$USER"
 ```
 
-Put Flink behind Caddy, nginx, or another reverse proxy that routes both the base domain and wildcard subdomains to `127.0.0.1:8080`:
-
-```caddyfile
-flink.internal, *.flink.internal {
-  reverse_proxy 127.0.0.1:8080
-}
-```
-
 With wildcard DNS and `baseHost` configured, tenant site domains are served as:
 
 ```text
@@ -350,6 +351,106 @@ Path-based hosting works without wildcard DNS, but treat it as a fallback:
 ```text
 https://flink.internal/t/alice/s/demo/
 ```
+
+### Tunnels And Private Exposure
+
+Flink works best when the same tunnel or proxy can route both the base hostname and wildcard site hostnames to the server:
+
+```text
+flink.example.com
+*.flink.example.com
+```
+
+Then set:
+
+```yaml
+baseHost: flink.example.com
+```
+
+Published sites will use domain-based URLs such as:
+
+```text
+https://alice--demo.flink.example.com/
+```
+
+Use path-based URLs only when the tunnel cannot route wildcard hostnames:
+
+```text
+https://flink.example.com/t/alice/s/demo/
+```
+
+#### Caddy Or Another Reverse Proxy
+
+Flink itself only needs HTTP on one port, usually `127.0.0.1:8080`. A reverse proxy is useful when you want HTTPS and domain-based site routing, because it can accept both the base host and wildcard site hosts and forward all of them to Flink.
+
+With Caddy:
+
+```caddyfile
+flink.example.com, *.flink.example.com {
+  reverse_proxy 127.0.0.1:8080
+}
+```
+
+Use the same idea with nginx, Traefik, a load balancer, or an ingress controller. The important part is that both `flink.example.com` and `*.flink.example.com` reach the same Flink server, and the Flink config has:
+
+```yaml
+baseHost: flink.example.com
+```
+
+#### Cloudflare Tunnel
+
+Cloudflare Tunnel is a good fit for domain-based Flink hosting because it can route public hostnames, including wildcard hostnames, to one local service.
+
+Create or edit a `cloudflared` tunnel config like:
+
+```yaml
+tunnel: <tunnel-id-or-name>
+credentials-file: /etc/cloudflared/<tunnel-id>.json
+
+ingress:
+  - hostname: flink.example.com
+    service: http://localhost:8080
+  - hostname: "*.flink.example.com"
+    service: http://localhost:8080
+  - service: http_status:404
+```
+
+Point both `flink.example.com` and `*.flink.example.com` at the tunnel in Cloudflare DNS, set `baseHost: flink.example.com`, and run Flink on `localhost:8080`.
+
+#### Tailscale Private Tailnet
+
+For private tailnet-only access, prefer domain-based hosting by using an internal DNS name that resolves inside the tailnet:
+
+```text
+flink.tailnet.internal       -> <flink-server-tailscale-ip>
+*.flink.tailnet.internal     -> <flink-server-tailscale-ip>
+```
+
+Set:
+
+```yaml
+baseHost: flink.tailnet.internal
+```
+
+This keeps the normal Flink site shape inside the tailnet:
+
+```text
+https://alice--demo.flink.tailnet.internal/
+```
+
+If you only use the machine's Tailscale MagicDNS name and do not have wildcard DNS, leave `baseHost` empty and use path-based URLs.
+
+#### Tailscale Funnel
+
+Tailscale Funnel is useful for quickly exposing one Flink server URL on the internet, but it is usually a poor fit for Flink's preferred domain-based site URLs unless you also provide wildcard hostname routing in front of it.
+
+For quick demos, leave `baseHost` empty and expose port `8080` using Tailscale Serve/Funnel. Then use path-based site URLs:
+
+```text
+https://<machine>.<tailnet>.ts.net/t/alice/s/demo/
+```
+
+For production-like Flink hosting, prefer Cloudflare Tunnel, a VPS reverse proxy with wildcard DNS, or private Tailscale access with internal wildcard DNS.
 
 ## Tenant Administration
 
