@@ -205,82 +205,51 @@ ai        optional server-side LLM endpoint
 
 If AI is not configured on the server, AI calls return a stable "not configured" response instead of failing unpredictably.
 
-## Run A Local Flink Server
-
-For development or local demos, `localhost` usually has no wildcard DNS. That means local runs use path-based fallback URLs unless you add your own wildcard DNS entry.
-
-```sh
-make run
-```
-
-That creates `.flink/dev.yaml` on first run and starts the server at:
-
-```text
-http://localhost:8080
-```
-
-Manual equivalent:
-
-```sh
-go run ./server init --config flink.yaml
-go run ./server --config flink.yaml
-```
-
-Example config:
-
-```yaml
-addr: :8080
-dataDir: ./data
-storage: file
-baseHost: ""
-autoApproveTenants: false
-disableTenantRegistration: false
-defaultSiteAuthMode: owner
-ai:
-  apiKey: ""
-  baseURL: https://api.openai.com/v1
-  model: gpt-4.1-mini
-bootstrapTenants: []
-```
-
-For shared environments, set `baseHost` to the wildcard domain and route both the base domain and wildcard subdomains to the Flink server.
-
-Register at:
-
-```text
-http://localhost:8080/_flink/register
-```
-
-Approve a pending tenant:
-
-```sh
-go run ./server tenants pending --config flink.yaml
-go run ./server tenants approve <tenant> --config flink.yaml
-```
-
-For local automation, bootstrap a ready-to-use tenant:
-
-```yaml
-bootstrapTenants:
-  - username: demo
-    password: flink
-```
-
-In high-trust environments, new tenants can be approved automatically:
-
-```yaml
-autoApproveTenants: true
-```
-
-To remove the web "request tenant" flow entirely, disable tenant registration and create tenants from the server CLI:
-
-```yaml
-disableTenantRegistration: true
-```
-
 ## Host A Flink Server
 
 The server is a single Go binary. It serves the dashboard, hosted sites, APIs, uploads, websocket rooms, and tenant sessions.
+
+### Docker
+
+Release builds publish a scratch-based server image to GitHub Container Registry:
+
+```text
+ghcr.io/csweichel/flink-server:<version>
+ghcr.io/csweichel/flink-server:latest
+```
+
+Run it with `/data` mounted as the persistent volume. The config lives at `/data/flink.yaml`; site state is stored below `/data/data` by default.
+
+```sh
+mkdir -p ./flink-data
+docker run --rm -v "$PWD/flink-data:/data" ghcr.io/csweichel/flink-server:latest init --config /data/flink.yaml
+docker run -d --name flink \
+  -p 8080:8080 \
+  -v "$PWD/flink-data:/data" \
+  ghcr.io/csweichel/flink-server:latest
+```
+
+Bootstrap an initial tenant:
+
+```sh
+docker run --rm -v "$PWD/flink-data:/data" ghcr.io/csweichel/flink-server:latest tenants bootstrap demo flink --config /data/flink.yaml
+```
+
+Edit `flink-data/flink.yaml` to set `baseHost`, storage, tenant registration, default site auth, and AI settings. Restart the container after changing config:
+
+```sh
+docker restart flink
+```
+
+Use a reverse proxy that routes both the base domain and wildcard subdomains to the container port:
+
+```caddyfile
+flink.internal, *.flink.internal {
+  reverse_proxy 127.0.0.1:8080
+}
+```
+
+### User Systemd
 
 Install or update it as the current Unix user:
 
@@ -312,6 +281,20 @@ ai:
   baseURL: https://api.openai.com/v1
   model: gpt-4.1-mini
 bootstrapTenants: []
+```
+
+For shared environments, set `baseHost` to the wildcard domain and route both the base domain and wildcard subdomains to the Flink server.
+
+In high-trust environments, new tenants can be approved automatically:
+
+```yaml
+autoApproveTenants: true
+```
+
+To remove the web "request tenant" flow entirely, disable tenant registration and create tenants from the server CLI:
+
+```yaml
+disableTenantRegistration: true
 ```
 
 Run the same installer command again to update the binary and restart the user service.
@@ -454,7 +437,7 @@ server/storage/       storage abstraction and backends
 server/frontend/      React/Vite/Tailwind dashboard
 server/extras/        systemd unit and install/update script
 .ona/automations.yaml Ona service and build/test tasks
-.goreleaser.yaml      release archives for the CLI and server
+.goreleaser.yaml      release archives and GHCR image for the CLI and server
 .github/workflows/    GitHub Actions release workflow
 ```
 
