@@ -25,7 +25,7 @@ test("storage APIs call tenant site public endpoints with credentials", async ()
 
   assert.deepEqual(value, { text: "saved" });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://flink.internal/api/public/demo/data/note");
+  assert.equal(calls[0].url, "https://flink.internal/api/public/t/alice/s/demo/data/note");
   assert.equal(calls[0].init?.method, "PUT");
   assert.equal(calls[0].init?.credentials, "same-origin");
   assert.equal(calls[0].init?.body, JSON.stringify({ text: "saved" }));
@@ -67,10 +67,10 @@ test("uploads post multipart data and expose upload helpers", async () => {
   assert.deepEqual(uploaded, { url: "/uploads/alice/demo/stored.txt", name: "file.txt" });
   assert.equal(text, "uploaded text");
   assert.deepEqual(deleted, { deleted: true });
-  assert.equal(calls[0].url, "https://flink.internal/api/public/demo/uploads");
-  assert.equal(calls[1].url, "https://flink.internal/api/public/demo/uploads");
+  assert.equal(calls[0].url, "https://flink.internal/api/public/t/alice/s/demo/uploads");
+  assert.equal(calls[1].url, "https://flink.internal/api/public/t/alice/s/demo/uploads");
   assert.equal(calls[2].url, "https://flink.internal/uploads/alice/demo/stored.txt");
-  assert.equal(calls[3].url, "https://flink.internal/api/public/demo/uploads?name=stored.txt");
+  assert.equal(calls[3].url, "https://flink.internal/api/public/t/alice/s/demo/uploads?name=stored.txt");
 });
 
 test("file APIs list, write, and delete site files", async () => {
@@ -86,6 +86,7 @@ test("file APIs list, write, and delete site files", async () => {
     return jsonResponse({ path: "assets/app.css" });
   };
   const flink = createFlinkClient({
+    tenant: "alice",
     site: "demo",
     baseUrl: "https://flink.internal",
     fetch: fetchMock as typeof fetch,
@@ -97,11 +98,11 @@ test("file APIs list, write, and delete site files", async () => {
 
   assert.deepEqual(files, [{ path: "assets/app.css", size: 15 }]);
   assert.deepEqual(deleted, { deleted: true });
-  assert.equal(calls[0].url, "https://flink.internal/api/public/demo/files?prefix=assets");
-  assert.equal(calls[1].url, "https://flink.internal/api/public/demo/files?path=assets%2Fapp.css");
+  assert.equal(calls[0].url, "https://flink.internal/api/public/t/alice/s/demo/files?prefix=assets");
+  assert.equal(calls[1].url, "https://flink.internal/api/public/t/alice/s/demo/files?path=assets%2Fapp.css");
   assert.equal(calls[1].init?.method, "PUT");
   assert.equal(calls[1].init?.body, "body{color:red}");
-  assert.equal(calls[2].url, "https://flink.internal/api/public/demo/files?path=assets%2Fapp.css");
+  assert.equal(calls[2].url, "https://flink.internal/api/public/t/alice/s/demo/files?path=assets%2Fapp.css");
   assert.equal(calls[2].init?.method, "DELETE");
 });
 
@@ -142,6 +143,7 @@ test("realtime rooms create WebSocket URLs, parse messages, and send JSON", () =
   }
   const received: unknown[] = [];
   const flink = createFlinkClient({
+    tenant: "alice",
     site: "demo",
     baseUrl: "https://flink.internal",
     fetch: (async () => jsonResponse({})) as typeof fetch,
@@ -152,7 +154,7 @@ test("realtime rooms create WebSocket URLs, parse messages, and send JSON", () =
   room.send({ text: "hi" });
   sockets[0].emit("message", { data: `{"text":"peer"}` } as MessageEvent);
 
-  assert.equal(sockets[0].url, "wss://flink.internal/ws/demo/chat");
+  assert.equal(sockets[0].url, "wss://flink.internal/ws/alice/demo/chat");
   assert.deepEqual(sockets[0].sent, [`{"text":"hi"}`]);
   assert.deepEqual(received, [{ text: "peer" }]);
 });

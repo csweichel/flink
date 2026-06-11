@@ -201,6 +201,61 @@ func TestSiteListAndDeleteUseExpectedAPI(t *testing.T) {
 	}
 }
 
+func TestSiteAuthShowsAndUpdatesPolicy(t *testing.T) {
+	var gotPolicy siteAuthPolicy
+	var gotPut bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, password, ok := r.BasicAuth()
+		if !ok || user != "alice" || password != "secret" {
+			t.Fatalf("missing or wrong auth")
+		}
+		if r.URL.Path != "/api/sites/demo/auth" {
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(siteAuthPolicy{Mode: "owner"})
+		case http.MethodPut:
+			gotPut = true
+			gotPolicy = siteAuthPolicy{}
+			if err := json.NewDecoder(r.Body).Decode(&gotPolicy); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(gotPolicy)
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	out, err := runCommand("site", "auth", "demo", "--server", server.URL, "--tenant", "alice", "--password", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "demo auth: owner") {
+		t.Fatalf("unexpected auth output: %q", out)
+	}
+
+	out, err = runCommand("site", "auth", "demo", "tenants", "bob", "alice", "--server", server.URL, "--tenant", "alice", "--password", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gotPut || gotPolicy.Mode != "tenants" || strings.Join(gotPolicy.Tenants, ",") != "alice,bob" {
+		t.Fatalf("unexpected auth update: put=%v policy=%#v", gotPut, gotPolicy)
+	}
+	if !strings.Contains(out, "demo auth: tenants (alice, bob)") {
+		t.Fatalf("unexpected update output: %q", out)
+	}
+
+	out, err = runCommand("site", "auth", "demo", "owner", "--server", server.URL, "--tenant", "alice", "--password", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPolicy.Mode != "owner" || len(gotPolicy.Tenants) != 0 || !strings.Contains(out, "demo auth: owner") {
+		t.Fatalf("unexpected owner update: policy=%#v output=%q", gotPolicy, out)
+	}
+}
+
 func TestSiteExampleListsAndPublishesBuiltInExamples(t *testing.T) {
 	out, err := runCommand("site", "example")
 	if err != nil {

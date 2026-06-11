@@ -5,8 +5,14 @@ import "./index.css";
 interface SiteMeta {
   slug: string;
   title: string;
+  auth: SiteAuthPolicy;
   createdAt: string;
   updatedAt: string;
+}
+
+interface SiteAuthPolicy {
+  mode: "owner" | "none" | "tenants";
+  tenants?: string[];
 }
 
 interface SiteFileInfo {
@@ -167,6 +173,7 @@ function App() {
               <thead className="bg-stone-50 text-xs uppercase text-neutral-500">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Site</th>
+                  <th className="px-3 py-2 font-semibold">Access</th>
                   <th className="px-3 py-2 font-semibold">Updated</th>
                   <th className="px-3 py-2 font-semibold">Actions</th>
                 </tr>
@@ -179,6 +186,7 @@ function App() {
                         {site.slug}
                       </button>
                     </td>
+                    <td className="px-3 py-3 text-neutral-600">{formatAuth(site.auth)}</td>
                     <td className="px-3 py-3 text-neutral-600">{formatDate(site.updatedAt)}</td>
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-2">
@@ -200,7 +208,7 @@ function App() {
                 ))}
                 {sites.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-8 text-center text-neutral-600" colSpan={3}>
+                    <td className="px-3 py-8 text-center text-neutral-600" colSpan={4}>
                       No sites published yet.
                     </td>
                   </tr>
@@ -328,6 +336,17 @@ function formatDate(value: string) {
     return "-";
   }
   return new Date(value).toLocaleString();
+}
+
+function formatAuth(auth?: SiteAuthPolicy) {
+  if (!auth || auth.mode === "owner") {
+    return "Owner";
+  }
+  if (auth.mode === "tenants") {
+    const tenants = auth.tenants ?? [];
+    return tenants.length > 0 ? `Tenants: ${tenants.join(", ")}` : "Tenants: any";
+  }
+  return "Public";
 }
 
 function formatBytes(value: number) {

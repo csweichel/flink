@@ -80,6 +80,18 @@ List sites:
 bin/flink --server https://flink.internal --tenant demo --password flink site list
 ```
 
+Sites use the server's `defaultSiteAuthMode` when created. On the default server config, sites are private to the publishing tenant. Change who can view the hosted site and use its browser storage, upload, realtime, and AI APIs:
+
+```sh
+bin/flink --server https://flink.internal --tenant demo --password flink site auth hello
+bin/flink --server https://flink.internal --tenant demo --password flink site auth hello owner
+bin/flink --server https://flink.internal --tenant demo --password flink site auth hello none
+bin/flink --server https://flink.internal --tenant demo --password flink site auth hello tenants
+bin/flink --server https://flink.internal --tenant demo --password flink site auth hello tenants demo alice
+```
+
+Auth modes are `owner`, `none`, and `tenants`. `tenants` with no tenant list allows any approved tenant. `tenants <tenant>...` allows only the listed tenants.
+
 Publish a built-in example:
 
 ```sh
@@ -222,6 +234,8 @@ dataDir: ./data
 storage: file
 baseHost: ""
 autoApproveTenants: false
+disableTenantRegistration: false
+defaultSiteAuthMode: owner
 ai:
   apiKey: ""
   baseURL: https://api.openai.com/v1
@@ -258,6 +272,12 @@ In high-trust environments, new tenants can be approved automatically:
 autoApproveTenants: true
 ```
 
+To remove the web "request tenant" flow entirely, disable tenant registration and create tenants from the server CLI:
+
+```yaml
+disableTenantRegistration: true
+```
+
 ## Host A Flink Server
 
 The server is a single Go binary. It serves the dashboard, hosted sites, APIs, uploads, websocket rooms, and tenant sessions.
@@ -285,6 +305,8 @@ dataDir: /home/alice/.local/share/flink/data
 storage: bbolt
 baseHost: flink.internal
 autoApproveTenants: false
+disableTenantRegistration: false
+defaultSiteAuthMode: owner
 ai:
   apiKey: ""
   baseURL: https://api.openai.com/v1
@@ -388,6 +410,14 @@ storage: bbolt
 ```
 
 Future backends such as DynamoDB or Firebase should implement `server/storage.Backend` without changing `server/api`.
+
+Configure the default auth mode for newly-created sites:
+
+```yaml
+defaultSiteAuthMode: owner
+```
+
+Allowed values are `owner`, `none`, and `tenants`. Use `flink site auth <site> tenants <tenant>...` when a specific site should be shared with selected tenants.
 
 ## Ona Development Environment
 

@@ -8,6 +8,7 @@ func siteCommand(serverURL, username, password *string) *cobra.Command {
 	site.AddCommand(siteListCommand(serverURL, username, password))
 	site.AddCommand(siteWriteCommand(serverURL, username, password))
 	site.AddCommand(siteExampleCommand(serverURL, username, password))
+	site.AddCommand(siteAuthCommand(serverURL, username, password))
 	site.AddCommand(siteFilesCommand(serverURL, username, password))
 	site.AddCommand(siteDeleteFileCommand(serverURL, username, password))
 	site.AddCommand(siteDeleteCommand(serverURL, username, password))

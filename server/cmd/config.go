@@ -9,13 +9,15 @@ import (
 )
 
 type serverConfig struct {
-	Addr               string                  `yaml:"addr"`
-	DataDir            string                  `yaml:"dataDir"`
-	StorageDriver      string                  `yaml:"storage"`
-	BaseHost           string                  `yaml:"baseHost"`
-	AutoApproveTenants bool                    `yaml:"autoApproveTenants"`
-	AI                 api.AIConfig            `yaml:"ai"`
-	BootstrapTenants   []bootstrapTenantConfig `yaml:"bootstrapTenants"`
+	Addr                      string                  `yaml:"addr"`
+	DataDir                   string                  `yaml:"dataDir"`
+	StorageDriver             string                  `yaml:"storage"`
+	BaseHost                  string                  `yaml:"baseHost"`
+	AutoApproveTenants        bool                    `yaml:"autoApproveTenants"`
+	DisableTenantRegistration bool                    `yaml:"disableTenantRegistration"`
+	DefaultSiteAuthMode       string                  `yaml:"defaultSiteAuthMode"`
+	AI                        api.AIConfig            `yaml:"ai"`
+	BootstrapTenants          []bootstrapTenantConfig `yaml:"bootstrapTenants"`
 }
 
 type bootstrapTenantConfig struct {
@@ -25,11 +27,13 @@ type bootstrapTenantConfig struct {
 
 func defaultServerConfig() serverConfig {
 	return serverConfig{
-		Addr:               ":8080",
-		DataDir:            "./data",
-		StorageDriver:      "file",
-		BaseHost:           "",
-		AutoApproveTenants: false,
+		Addr:                      ":8080",
+		DataDir:                   "./data",
+		StorageDriver:             "file",
+		BaseHost:                  "",
+		AutoApproveTenants:        false,
+		DisableTenantRegistration: false,
+		DefaultSiteAuthMode:       api.SiteAuthOwner,
 		AI: api.AIConfig{
 			BaseURL: "https://api.openai.com/v1",
 			Model:   "gpt-4.1-mini",
@@ -80,6 +84,12 @@ func applyConfigValues(cfg *serverConfig, override serverConfig) {
 	}
 	if override.AutoApproveTenants {
 		cfg.AutoApproveTenants = true
+	}
+	if override.DisableTenantRegistration {
+		cfg.DisableTenantRegistration = true
+	}
+	if override.DefaultSiteAuthMode != "" {
+		cfg.DefaultSiteAuthMode = override.DefaultSiteAuthMode
 	}
 	if override.AI.APIKey != "" {
 		cfg.AI.APIKey = override.AI.APIKey

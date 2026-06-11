@@ -22,11 +22,13 @@ import (
 )
 
 type Config struct {
-	DataDir            string `yaml:"dataDir"`
-	StorageDriver      string `yaml:"storage"`
-	BaseHost           string `yaml:"baseHost"`
-	AutoApproveTenants bool   `yaml:"autoApproveTenants"`
-	AI                 api.AIConfig
+	DataDir                   string `yaml:"dataDir"`
+	StorageDriver             string `yaml:"storage"`
+	BaseHost                  string `yaml:"baseHost"`
+	AutoApproveTenants        bool   `yaml:"autoApproveTenants"`
+	DisableTenantRegistration bool   `yaml:"disableTenantRegistration"`
+	DefaultSiteAuthMode       string `yaml:"defaultSiteAuthMode"`
+	AI                        api.AIConfig
 }
 
 type App struct {
@@ -61,6 +63,12 @@ func (a *App) Init() error {
 	}
 	a.backend = backend
 	a.store = api.NewStore(backend, frontend.DefaultIndex())
+	if err := a.store.SetDefaultSiteAuthMode(a.config.DefaultSiteAuthMode); err != nil {
+		_ = backend.Close()
+		a.backend = nil
+		a.store = nil
+		return err
+	}
 	return a.store.Init()
 }
 
@@ -84,7 +92,7 @@ func (a *App) routes() {
 	a.mux.HandleFunc("/api/auth/me", a.requireTenant(a.handleMe))
 	a.mux.HandleFunc("/api/sites", a.requireTenant(a.handleSites))
 	a.mux.HandleFunc("/api/sites/", a.requireTenant(a.handleSiteAPI))
-	a.mux.HandleFunc("/api/public/", a.requireTenant(a.handlePublicAPI))
+	a.mux.HandleFunc("/api/public/", a.handlePublicAPI)
 	a.mux.HandleFunc("/llms.txt", a.handleLLMSTXT)
 	a.mux.HandleFunc("/flink-logo.png", a.handleLogo)
 	a.mux.HandleFunc("/favicon.ico", a.handleLogo)
@@ -97,9 +105,9 @@ func (a *App) routes() {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		http.ServeContent(w, r, "flink.js", time.Time{}, bytes.NewReader(b))
 	})
-	a.mux.HandleFunc("/uploads/", a.requireTenant(a.handleUploadFile))
-	a.mux.HandleFunc("/ws/", a.requireTenant(a.handleWS))
-	a.mux.HandleFunc("/", a.requireTenant(a.handleSite))
+	a.mux.HandleFunc("/uploads/", a.handleUploadFile)
+	a.mux.HandleFunc("/ws/", a.handleWS)
+	a.mux.HandleFunc("/", a.handleSite)
 }
 
 func (a *App) handleLLMSTXT(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +154,18 @@ Publish a single HTML file:
 ./flink site create my-site
 ./flink site write my-site ./index.html index.html
 
+Site access uses this server's default site auth mode when created. To make a site visible without signing in, run:
+
+./flink site auth my-site none
+
+To require any approved tenant login, run:
+
+./flink site auth my-site tenants
+
+To restrict to specific tenants, run:
+
+./flink site auth my-site tenants <tenant>...
+
 For multi-file websites, publish a directory. Paths are preserved under the same domain:
 
 - ./dist/index.html -> https://<tenant>--<site>.%s/
@@ -188,6 +208,18 @@ Publish a single HTML file:
 
 ./flink site create my-site
 ./flink site write my-site ./index.html index.html
+
+Site access uses this server's default site auth mode when created. To make a site visible without signing in, run:
+
+./flink site auth my-site none
+
+To require any approved tenant login, run:
+
+./flink site auth my-site tenants
+
+To restrict to specific tenants, run:
+
+./flink site auth my-site tenants <tenant>...
 
 For multi-file websites, publish a directory. Paths are preserved under the same site base:
 
@@ -253,6 +285,9 @@ func tenantFromContext(ctx context.Context) api.PublicTenant {
 }
 
 func (a *App) authenticate(r *http.Request) (api.PublicTenant, bool) {
+	if tenant := tenantFromContext(r.Context()); tenant.Username != "" {
+		return tenant, true
+	}
 	if username, password, ok := r.BasicAuth(); ok {
 		tenant, err := a.store.AuthenticateTenant(username, password)
 		return tenant, err == nil
@@ -275,12 +310,12 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(w, loginHTML(""))
+		_, _ = io.WriteString(w, loginHTML("", !a.config.DisableTenantRegistration))
 	case http.MethodPost:
 		if err := r.ParseForm(); err != nil {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(w, loginHTML(err.Error()))
+			_, _ = io.WriteString(w, loginHTML(err.Error(), !a.config.DisableTenantRegistration))
 			return
 		}
 		username := r.Form.Get("username")
@@ -289,7 +324,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = io.WriteString(w, loginHTML(err.Error()))
+			_, _ = io.WriteString(w, loginHTML(err.Error(), !a.config.DisableTenantRegistration))
 			return
 		}
 		session, err := a.store.CreateSession(tenant.Username, 7*24*time.Hour)
@@ -305,6 +340,10 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if a.config.DisableTenantRegistration {
+		http.NotFound(w, r)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -365,8 +404,8 @@ func wantsHTML(r *http.Request) bool {
 	return r.Method == http.MethodGet && strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
-func loginHTML(message string) string {
-	return authHTML("Sign in", "/_flink/login", "Sign in", message, true)
+func loginHTML(message string, showRegister bool) string {
+	return authHTML("Sign in", "/_flink/login", "Sign in", message, showRegister)
 }
 
 func registerHTML(message string) string {
@@ -432,6 +471,33 @@ func (a *App) handleSites(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleSiteAPI(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/sites/"), "/")
+	if slug, ok := strings.CutSuffix(rest, "/auth"); ok && api.ValidSlug(slug) {
+		tenant := tenantFromContext(r.Context())
+		switch r.Method {
+		case http.MethodGet:
+			meta, err := a.store.ReadMeta(tenant.Username, slug)
+			if err != nil {
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			writeJSON(w, meta.Auth, nil)
+		case http.MethodPut, http.MethodPost:
+			var policy api.SiteAuthPolicy
+			if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			meta, err := a.store.UpdateSiteAuth(tenant.Username, slug, policy)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, meta.Auth, nil)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+		return
+	}
 	if r.Method == http.MethodDelete && api.ValidSlug(rest) {
 		tenant := tenantFromContext(r.Context())
 		writeJSON(w, map[string]bool{"deleted": true}, a.store.DeleteSite(tenant.Username, rest))
@@ -446,12 +512,35 @@ func (a *App) handleSiteAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handlePublicAPI(w http.ResponseWriter, r *http.Request) {
-	slug, area, tail, ok := parseAPIPath(strings.TrimPrefix(r.URL.Path, "/api/public/"))
+	tenant, slug, area, tail, ok := parsePublicAPIPath(strings.TrimPrefix(r.URL.Path, "/api/public/"))
 	if !ok {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid public API path"))
 		return
 	}
-	a.dispatchAPI(w, r, slug, area, tail)
+	authTenant, authenticated := a.authenticate(r)
+	if tenant == "" {
+		if !authenticated {
+			writeError(w, http.StatusUnauthorized, fmt.Errorf("authentication required"))
+			return
+		}
+		tenant = authTenant.Username
+	}
+	if area == "files" || area == "archive" {
+		if !authenticated {
+			writeError(w, http.StatusUnauthorized, fmt.Errorf("authentication required"))
+			return
+		}
+		if authTenant.Username != tenant {
+			http.NotFound(w, r)
+			return
+		}
+		a.dispatchAPIForTenant(w, r, tenant, slug, area, tail)
+		return
+	}
+	if !a.authorizeSiteAPI(w, r, tenant, slug) {
+		return
+	}
+	a.dispatchAPIForTenant(w, r, tenant, slug, area, tail)
 }
 
 func parseAPIPath(rest string) (slug, area, tail string, ok bool) {
@@ -465,17 +554,58 @@ func parseAPIPath(rest string) (slug, area, tail string, ok bool) {
 	return parts[0], parts[1], tail, true
 }
 
+func parsePublicAPIPath(rest string) (tenant, slug, area, tail string, ok bool) {
+	rest = strings.Trim(rest, "/")
+	tenantParts := strings.SplitN(rest, "/", 6)
+	if len(tenantParts) >= 5 && tenantParts[0] == "t" && tenantParts[2] == "s" && api.ValidSlug(tenantParts[1]) && api.ValidSlug(tenantParts[3]) && isAPIArea(tenantParts[4]) {
+		if len(tenantParts) == 6 {
+			tail = tenantParts[5]
+		}
+		return tenantParts[1], tenantParts[3], tenantParts[4], tail, true
+	}
+	parts := strings.SplitN(rest, "/", 4)
+	if len(parts) < 2 || !api.ValidSlug(parts[0]) {
+		return "", "", "", "", false
+	}
+	if isAPIArea(parts[1]) {
+		if len(parts) == 3 {
+			tail = parts[2]
+		}
+		return "", parts[0], parts[1], tail, true
+	}
+	if len(parts) < 3 || !api.ValidSlug(parts[1]) || !isAPIArea(parts[2]) {
+		return "", "", "", "", false
+	}
+	if len(parts) == 4 {
+		tail = parts[3]
+	}
+	return parts[0], parts[1], parts[2], tail, true
+}
+
+func isAPIArea(area string) bool {
+	switch area {
+	case "files", "data", "uploads", "archive", "ai":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *App) dispatchAPI(w http.ResponseWriter, r *http.Request, slug, area, tail string) {
 	tenant := tenantFromContext(r.Context())
+	a.dispatchAPIForTenant(w, r, tenant.Username, slug, area, tail)
+}
+
+func (a *App) dispatchAPIForTenant(w http.ResponseWriter, r *http.Request, tenant, slug, area, tail string) {
 	switch area {
 	case "files":
-		a.handleFiles(w, r, tenant.Username, slug)
+		a.handleFiles(w, r, tenant, slug)
 	case "data":
-		a.handleData(w, r, tenant.Username, slug, tail)
+		a.handleData(w, r, tenant, slug, tail)
 	case "uploads":
-		a.handleUpload(w, r, tenant.Username, slug)
+		a.handleUpload(w, r, tenant, slug)
 	case "archive":
-		a.handleArchive(w, r, tenant.Username, slug)
+		a.handleArchive(w, r, tenant, slug)
 	case "ai":
 		a.handleAI(w, r)
 	default:
@@ -718,11 +848,13 @@ func (a *App) handleAI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleUploadFile(w http.ResponseWriter, r *http.Request) {
-	tenant := tenantFromContext(r.Context())
 	rest := strings.TrimPrefix(r.URL.Path, "/uploads/")
 	parts := strings.SplitN(rest, "/", 3)
-	if len(parts) != 3 || parts[0] != tenant.Username || !api.ValidSlug(parts[1]) {
+	if len(parts) != 3 || !api.ValidSlug(parts[0]) || !api.ValidSlug(parts[1]) {
 		http.NotFound(w, r)
+		return
+	}
+	if !a.authorizeSiteAPI(w, r, parts[0], parts[1]) {
 		return
 	}
 	p, err := api.CleanPath(parts[2])
@@ -730,7 +862,7 @@ func (a *App) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	b, err := a.store.ReadUpload(tenant.Username, parts[1], p)
+	b, err := a.store.ReadUpload(parts[0], parts[1], p)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -742,25 +874,41 @@ func (a *App) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
-	tenant := tenantFromContext(r.Context())
 	rest := strings.TrimPrefix(r.URL.Path, "/ws/")
-	parts := strings.SplitN(rest, "/", 2)
-	if len(parts) != 2 || !api.ValidSlug(parts[0]) {
+	parts := strings.SplitN(rest, "/", 3)
+	var tenant, slug, room string
+	switch {
+	case len(parts) == 2 && api.ValidSlug(parts[0]):
+		authTenant, ok := a.authenticate(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, fmt.Errorf("authentication required"))
+			return
+		}
+		tenant, slug, room = authTenant.Username, parts[0], parts[1]
+	case len(parts) == 3 && api.ValidSlug(parts[0]) && api.ValidSlug(parts[1]):
+		tenant, slug, room = parts[0], parts[1], parts[2]
+	default:
 		http.NotFound(w, r)
 		return
 	}
-	a.hub.ServeRoom(w, r, tenant.Username+"/"+parts[0]+"/"+parts[1])
+	if !a.authorizeSiteAPI(w, r, tenant, slug) {
+		return
+	}
+	a.hub.ServeRoom(w, r, tenant+"/"+slug+"/"+room)
 }
 
 func (a *App) handleSite(w http.ResponseWriter, r *http.Request) {
-	authTenant := tenantFromContext(r.Context())
-	tenant, slug, sitePath := a.resolveSite(r, authTenant.Username)
+	authTenant, authenticated := a.authenticate(r)
+	defaultTenant := ""
+	if authenticated {
+		defaultTenant = authTenant.Username
+	}
+	tenant, slug, sitePath := a.resolveSite(r, defaultTenant)
 	if slug == "" {
 		http.Redirect(w, r, "/_flink", http.StatusSeeOther)
 		return
 	}
-	if tenant != authTenant.Username {
-		http.NotFound(w, r)
+	if !a.authorizeSitePage(w, r, tenant, slug) {
 		return
 	}
 	originalSitePath := sitePath
@@ -794,6 +942,50 @@ func (a *App) handleSite(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", ct)
 	}
 	http.ServeContent(w, r, filepath.Base(p), time.Now(), bytes.NewReader(b))
+}
+
+func (a *App) authorizeSitePage(w http.ResponseWriter, r *http.Request, tenant, slug string) bool {
+	if !api.ValidSlug(tenant) || !api.ValidSlug(slug) {
+		http.NotFound(w, r)
+		return false
+	}
+	meta, err := a.store.ReadMeta(tenant, slug)
+	if err != nil {
+		http.NotFound(w, r)
+		return false
+	}
+	authTenant, authenticated := a.authenticate(r)
+	if meta.Auth.Allows(tenant, authTenant.Username, authenticated) {
+		return true
+	}
+	if !authenticated {
+		http.Redirect(w, r, "/_flink/login", http.StatusSeeOther)
+		return false
+	}
+	http.NotFound(w, r)
+	return false
+}
+
+func (a *App) authorizeSiteAPI(w http.ResponseWriter, r *http.Request, tenant, slug string) bool {
+	if !api.ValidSlug(tenant) || !api.ValidSlug(slug) {
+		http.NotFound(w, r)
+		return false
+	}
+	meta, err := a.store.ReadMeta(tenant, slug)
+	if err != nil {
+		http.NotFound(w, r)
+		return false
+	}
+	authTenant, authenticated := a.authenticate(r)
+	if meta.Auth.Allows(tenant, authTenant.Username, authenticated) {
+		return true
+	}
+	if !authenticated {
+		writeError(w, http.StatusUnauthorized, fmt.Errorf("authentication required"))
+		return false
+	}
+	http.NotFound(w, r)
+	return false
 }
 
 func (a *App) resolveSite(r *http.Request, defaultTenant string) (string, string, string) {

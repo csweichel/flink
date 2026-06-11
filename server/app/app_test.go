@@ -219,6 +219,35 @@ func TestTenantRegistrationAutoApproveCreatesSession(t *testing.T) {
 	}
 }
 
+func TestTenantRegistrationCanBeDisabled(t *testing.T) {
+	a := New(Config{DataDir: t.TempDir(), DisableTenantRegistration: true})
+	if err := a.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	res := rawRequest(t, a, http.MethodGet, "/_flink/login", nil, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("login failed: %d %s", res.Code, res.Body.String())
+	}
+	if bytes.Contains(res.Body.Bytes(), []byte("/_flink/register")) || bytes.Contains(res.Body.Bytes(), []byte("Request a tenant account")) {
+		t.Fatalf("login should not link to tenant registration:\n%s", res.Body.String())
+	}
+
+	res = rawRequest(t, a, http.MethodGet, "/_flink/register", nil, "")
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("disabled registration GET should 404, got %d", res.Code)
+	}
+
+	form := bytes.NewBufferString("username=blocked&password=secret")
+	req := httptest.NewRequest(http.MethodPost, "/_flink/register", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	out := httptest.NewRecorder()
+	a.ServeHTTP(out, req)
+	if out.Code != http.StatusNotFound {
+		t.Fatalf("disabled registration POST should 404, got %d", out.Code)
+	}
+}
+
 func TestTenantSessionCookieAuthenticatesDashboardAndAPI(t *testing.T) {
 	a := testApp(t)
 	session, err := a.store.CreateSession(testTenant, time.Hour)
@@ -308,6 +337,106 @@ func TestTenantSiteSlugsAreIsolated(t *testing.T) {
 	}
 }
 
+func TestSiteAuthPoliciesControlHostedSiteAccess(t *testing.T) {
+	a := testApp(t)
+	for _, tenant := range []string{"beta", "gamma"} {
+		if _, err := a.store.CreateApprovedTenant(tenant, testPassword); err != nil {
+			t.Fatal(err)
+		}
+	}
+	postJSON(t, a, "/api/sites", map[string]string{"slug": "locked"})
+	putJSON(t, a, "/api/sites/locked/files?path=index.html", map[string]string{"content": "locked site"})
+
+	res := request(t, a, http.MethodGet, "/api/sites/locked/auth", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"mode":"owner"`)) {
+		t.Fatalf("new site should default to owner auth: %d %s", res.Code, res.Body.String())
+	}
+
+	res = rawRequest(t, a, http.MethodGet, "/t/acme/s/locked/", nil, "")
+	if res.Code != http.StatusSeeOther || res.Header().Get("Location") != "/_flink/login" {
+		t.Fatalf("owner-only site should redirect anonymous viewers, got %d location=%q", res.Code, res.Header().Get("Location"))
+	}
+	res = requestAs(t, a, "beta", testPassword, http.MethodGet, "/t/acme/s/locked/", nil, "")
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("owner-only site should hide from another tenant, got %d", res.Code)
+	}
+
+	putJSON(t, a, "/api/sites/locked/auth", api.SiteAuthPolicy{Mode: api.SiteAuthNone})
+	res = rawRequest(t, a, http.MethodGet, "/t/acme/s/locked/", nil, "")
+	if res.Code != http.StatusOK || res.Body.String() != "locked site" {
+		t.Fatalf("public site should serve anonymously: %d %q", res.Code, res.Body.String())
+	}
+	rawPutJSON(t, a, "/api/public/t/acme/s/locked/data/note", map[string]any{"text": "public"})
+	res = rawRequest(t, a, http.MethodGet, "/api/public/t/acme/s/locked/data/note", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte("public")) {
+		t.Fatalf("public site API should work anonymously: %d %s", res.Code, res.Body.String())
+	}
+
+	putJSON(t, a, "/api/sites/locked/auth", api.SiteAuthPolicy{Mode: api.SiteAuthTenants})
+	res = rawRequest(t, a, http.MethodGet, "/t/acme/s/locked/", nil, "")
+	if res.Code != http.StatusSeeOther {
+		t.Fatalf("authenticated site should redirect anonymous viewers, got %d", res.Code)
+	}
+	res = requestAs(t, a, "beta", testPassword, http.MethodGet, "/t/acme/s/locked/", nil, "")
+	if res.Code != http.StatusOK || res.Body.String() != "locked site" {
+		t.Fatalf("authenticated site should allow another tenant: %d %q", res.Code, res.Body.String())
+	}
+	res = rawRequest(t, a, http.MethodGet, "/api/public/t/acme/s/locked/data/note", nil, "")
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("authenticated site API should reject anonymous callers, got %d", res.Code)
+	}
+
+	putJSON(t, a, "/api/sites/locked/auth", api.SiteAuthPolicy{Mode: api.SiteAuthTenants, Tenants: []string{"acme", "beta"}})
+	res = requestAs(t, a, "beta", testPassword, http.MethodGet, "/t/acme/s/locked/", nil, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("tenant allow-list should allow beta, got %d", res.Code)
+	}
+	res = requestAs(t, a, "gamma", testPassword, http.MethodGet, "/t/acme/s/locked/", nil, "")
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("tenant allow-list should hide from gamma, got %d", res.Code)
+	}
+	res = request(t, a, http.MethodGet, "/api/sites/locked/auth", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"mode":"tenants"`)) || !bytes.Contains(res.Body.Bytes(), []byte(`"beta"`)) {
+		t.Fatalf("tenant allow-list should normalize to tenants policy: %d %s", res.Code, res.Body.String())
+	}
+
+	putJSON(t, a, "/api/sites/locked/auth", api.SiteAuthPolicy{Mode: api.SiteAuthOwner})
+	res = requestAs(t, a, "beta", testPassword, http.MethodGet, "/t/acme/s/locked/", nil, "")
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("owner mode should hide from beta, got %d", res.Code)
+	}
+	res = request(t, a, http.MethodGet, "/t/acme/s/locked/", nil, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("owner mode should allow owner, got %d", res.Code)
+	}
+
+	res = request(t, a, http.MethodGet, "/api/sites/locked/auth", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"mode":"owner"`)) {
+		t.Fatalf("auth policy GET failed: %d %s", res.Code, res.Body.String())
+	}
+}
+
+func TestDefaultSiteAuthModeConfigAppliesToNewSites(t *testing.T) {
+	a := testAppWithConfig(t, Config{DataDir: t.TempDir(), BaseHost: "quick.internal", DefaultSiteAuthMode: api.SiteAuthNone})
+	postJSON(t, a, "/api/sites", map[string]string{"slug": "public-default"})
+
+	res := request(t, a, http.MethodGet, "/api/sites/public-default/auth", nil, "")
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"mode":"none"`)) {
+		t.Fatalf("configured default auth mode not applied: %d %s", res.Code, res.Body.String())
+	}
+	res = rawRequest(t, a, http.MethodGet, "/t/acme/s/public-default/", nil, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("public default site should serve anonymously, got %d %s", res.Code, res.Body.String())
+	}
+}
+
+func TestInvalidDefaultSiteAuthModeFailsInit(t *testing.T) {
+	a := New(Config{DataDir: t.TempDir(), DefaultSiteAuthMode: "bad-mode"})
+	if err := a.Init(); err == nil || !strings.Contains(err.Error(), "default site auth mode") {
+		t.Fatalf("expected invalid default site auth mode error, got %v", err)
+	}
+}
+
 func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 	a := testApp(t)
 	res := request(t, a, http.MethodGet, "/_flink/", nil, "")
@@ -338,6 +467,9 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 		"Do not ask the user to clone the repository or build the CLI from source",
 		"https://<tenant>--<site>.quick.internal/",
 		"https://demo--my-site.quick.internal/",
+		"./flink site auth my-site none",
+		"./flink site auth my-site tenants",
+		"./flink site auth my-site tenants <tenant>...",
 	} {
 		if !bytes.Contains(res.Body.Bytes(), []byte(want)) {
 			t.Fatalf("llms.txt missing %q:\n%s", want, res.Body.String())
@@ -376,6 +508,7 @@ func TestLLMSTXTFallsBackToPathHostingWithoutBaseHost(t *testing.T) {
 		"This Flink server does not have domain-based hosting configured",
 		"https://flink.internal/t/<tenant>/s/<site>/",
 		"./flink site write my-site ./dist",
+		"./flink site auth my-site none",
 	} {
 		if !bytes.Contains(res.Body.Bytes(), []byte(want)) {
 			t.Fatalf("fallback llms.txt missing %q:\n%s", want, res.Body.String())
@@ -649,13 +782,27 @@ func putJSONMethod(t *testing.T, h http.Handler, method, url string, v any) {
 	}
 }
 
+func rawPutJSON(t *testing.T, h http.Handler, url string, v any) {
+	t.Helper()
+	b, _ := json.Marshal(v)
+	res := rawRequest(t, h, http.MethodPut, url, bytes.NewReader(b), "application/json")
+	if res.Code < 200 || res.Code > 299 {
+		t.Fatalf("PUT %s failed: %d %s", url, res.Code, res.Body.String())
+	}
+}
+
 func request(t *testing.T, h http.Handler, method, url string, body io.Reader, contentType string) *httptest.ResponseRecorder {
+	t.Helper()
+	return requestAs(t, h, testTenant, testPassword, method, url, body, contentType)
+}
+
+func requestAs(t *testing.T, h http.Handler, username, password, method, url string, body io.Reader, contentType string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, url, body)
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	req.SetBasicAuth(testTenant, testPassword)
+	req.SetBasicAuth(username, password)
 	res := httptest.NewRecorder()
 	h.ServeHTTP(res, req)
 	return res

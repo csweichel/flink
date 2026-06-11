@@ -84,6 +84,17 @@ Everything meaningful happens inside a tenant:
 
 Tenant web sessions use cookies. The user CLI uses HTTP Basic Auth with tenant username and password.
 
+Sites are owner-only by default. A tenant can change the hosted site's access policy with:
+
+```sh
+flink site auth <site> owner
+flink site auth <site> none
+flink site auth <site> tenants
+flink site auth <site> tenants <tenant>...
+```
+
+`owner` is the default and allows only the publishing tenant. `none` allows anonymous viewers to load the site and use browser storage/upload/realtime/AI APIs. `tenants` allows any approved tenant when no tenant list is provided, or only the listed approved tenant usernames when a list is provided.
+
 Useful operator commands:
 
 ```sh
@@ -108,6 +119,20 @@ or enable immediate registration approval in high-trust environments:
 ```yaml
 autoApproveTenants: true
 ```
+
+To remove tenant self-service registration from both the login UI and backend, use:
+
+```yaml
+disableTenantRegistration: true
+```
+
+New sites default to owner-only access unless the server config sets:
+
+```yaml
+defaultSiteAuthMode: owner
+```
+
+Allowed default modes are `owner`, `none`, and `tenants`. Use `flink site auth <site> tenants <tenant>...` for tenant allow-lists.
 
 ## Building Prototypes With Flink
 

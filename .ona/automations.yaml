@@ -14,6 +14,8 @@ services:
         storage: file
         baseHost: ""
         autoApproveTenants: true
+        disableTenantRegistration: false
+        defaultSiteAuthMode: owner
         ai:
           apiKey: ""
           baseURL: https://api.openai.com/v1

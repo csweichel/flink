@@ -93,6 +93,8 @@ dataDir: $DATA_DIR
 storage: bbolt
 baseHost: "$BASE_HOST"
 autoApproveTenants: false
+disableTenantRegistration: false
+defaultSiteAuthMode: owner
 ai:
   apiKey: ""
   baseURL: https://api.openai.com/v1

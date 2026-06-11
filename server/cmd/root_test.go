@@ -43,6 +43,8 @@ func TestRunInitWritesDefaultYAMLConfig(t *testing.T) {
 		"addr: :8080",
 		"dataDir: ./data",
 		"storage: file",
+		"disableTenantRegistration: false",
+		"defaultSiteAuthMode: owner",
 		"baseURL: https://api.openai.com/v1",
 		"model: gpt-4.1-mini",
 	} {
@@ -84,6 +86,8 @@ dataDir: /from-file
 storage: bbolt
 baseHost: file.internal
 autoApproveTenants: true
+disableTenantRegistration: true
+defaultSiteAuthMode: none
 ai:
   apiKey: test-key
   baseURL: http://ai.local/v1
@@ -105,6 +109,12 @@ bootstrapTenants:
 	}
 	if !cfg.AutoApproveTenants {
 		t.Fatal("expected autoApproveTenants from config")
+	}
+	if !cfg.DisableTenantRegistration {
+		t.Fatal("expected disableTenantRegistration from config")
+	}
+	if cfg.DefaultSiteAuthMode != api.SiteAuthNone {
+		t.Fatalf("unexpected default site auth mode: %q", cfg.DefaultSiteAuthMode)
 	}
 	if cfg.AI.APIKey != "test-key" || cfg.AI.BaseURL != "http://ai.local/v1" || cfg.AI.Model != "test-model" {
 		t.Fatalf("unexpected AI config: %#v", cfg.AI)

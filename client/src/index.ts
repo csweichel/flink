@@ -163,6 +163,9 @@ export function createFlinkClient(options: FlinkClientOptions = {}): FlinkClient
   }
 
   function apiUrl(path: string): string {
+    if (tenant) {
+      return `${baseUrl}/api/public/t/${encodeURIComponent(tenant)}/s/${encodeURIComponent(site)}${path}`;
+    }
     return `${baseUrl}/api/public/${encodeURIComponent(site)}${path}`;
   }
 
@@ -271,7 +274,7 @@ export function createFlinkClient(options: FlinkClientOptions = {}): FlinkClient
       if (onMessage) {
         handlers.add(onMessage);
       }
-      const socket = new WebSocketImpl(wsUrl(baseUrl, site, name));
+      const socket = new WebSocketImpl(wsUrl(baseUrl, tenant, site, name));
       socket.addEventListener("message", (event) => {
         const value = parseMessage(event.data) as TReceive;
         handlers.forEach((handler) => handler(value, event));
@@ -353,8 +356,10 @@ function inferTenantAndSite(): { tenant?: string; site: string } {
   return { site: label };
 }
 
-function wsUrl(baseUrl: string, site: string, room: string): string {
-  const encoded = `${encodeURIComponent(site)}/${encodeURIComponent(room || "main")}`;
+function wsUrl(baseUrl: string, tenant: string | undefined, site: string, room: string): string {
+  const encoded = tenant
+    ? `${encodeURIComponent(tenant)}/${encodeURIComponent(site)}/${encodeURIComponent(room || "main")}`
+    : `${encodeURIComponent(site)}/${encodeURIComponent(room || "main")}`;
   if (baseUrl) {
     const url = new URL(baseUrl, globalThis.location?.href);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";

@@ -18,11 +18,13 @@ func runServe(configPath string, options Options) error {
 	}
 
 	app := serverapp.New(serverapp.Config{
-		DataDir:            cfg.DataDir,
-		StorageDriver:      cfg.StorageDriver,
-		BaseHost:           cfg.BaseHost,
-		AutoApproveTenants: cfg.AutoApproveTenants,
-		AI:                 cfg.AI,
+		DataDir:                   cfg.DataDir,
+		StorageDriver:             cfg.StorageDriver,
+		BaseHost:                  cfg.BaseHost,
+		AutoApproveTenants:        cfg.AutoApproveTenants,
+		DisableTenantRegistration: cfg.DisableTenantRegistration,
+		DefaultSiteAuthMode:       cfg.DefaultSiteAuthMode,
+		AI:                        cfg.AI,
 	})
 	if err := app.Init(); err != nil {
 		return err

@@ -31,19 +31,30 @@ const (
 	TenantApproved = "approved"
 	TenantDenied   = "denied"
 
+	SiteAuthNone    = "none"
+	SiteAuthOwner   = "owner"
+	SiteAuthTenants = "tenants"
+
 	passwordHashIterations = 60000
 )
 
 type Store struct {
-	backend      storage.Backend
-	defaultIndex string
+	backend             storage.Backend
+	defaultIndex        string
+	defaultSiteAuthMode string
 }
 
 type SiteMeta struct {
-	Slug      string    `json:"slug"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Slug      string         `json:"slug"`
+	Title     string         `json:"title"`
+	Auth      SiteAuthPolicy `json:"auth"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+}
+
+type SiteAuthPolicy struct {
+	Mode    string   `json:"mode"`
+	Tenants []string `json:"tenants,omitempty"`
 }
 
 type TenantMeta struct {
@@ -85,11 +96,28 @@ type SiteFileInfo struct {
 }
 
 func NewStore(backend storage.Backend, defaultIndex string) *Store {
-	return &Store{backend: backend, defaultIndex: defaultIndex}
+	return &Store{backend: backend, defaultIndex: defaultIndex, defaultSiteAuthMode: SiteAuthOwner}
 }
 
 func (s *Store) Init() error {
 	return nil
+}
+
+func (s *Store) SetDefaultSiteAuthMode(mode string) error {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = SiteAuthOwner
+	}
+	switch mode {
+	case SiteAuthOwner, SiteAuthNone:
+		s.defaultSiteAuthMode = mode
+		return nil
+	case SiteAuthTenants:
+		s.defaultSiteAuthMode = SiteAuthTenants
+		return nil
+	default:
+		return fmt.Errorf("invalid default site auth mode %q", mode)
+	}
 }
 
 func (s *Store) RegisterTenant(username, password string) (PublicTenant, error) {
@@ -299,9 +327,10 @@ func (s *Store) CreateSite(tenant, slug, title string) (SiteMeta, error) {
 		return SiteMeta{}, fmt.Errorf("invalid slug %q: use lowercase letters, numbers, and dashes", slug)
 	}
 	now := time.Now().UTC()
-	meta := SiteMeta{Slug: slug, Title: title, CreatedAt: now, UpdatedAt: now}
+	meta := SiteMeta{Slug: slug, Title: title, Auth: s.defaultSiteAuthPolicy(), CreatedAt: now, UpdatedAt: now}
 	if existing, err := s.ReadMeta(tenant, slug); err == nil {
 		meta.CreatedAt = existing.CreatedAt
+		meta.Auth = existing.Auth
 	}
 	if _, err := s.ReadSiteFile(tenant, slug, "index.html"); errors.Is(err, ErrNotFound) {
 		if err := s.WriteSiteFile(tenant, slug, "index.html", []byte(s.defaultIndex)); err != nil {
@@ -325,6 +354,7 @@ func (s *Store) ListSites(tenant string) ([]SiteMeta, error) {
 	for _, entry := range entries {
 		var meta SiteMeta
 		if err := json.Unmarshal(entry.Value, &meta); err == nil && ValidSlug(meta.Slug) {
+			meta = normalizeSiteMeta(tenant, meta)
 			sites = append(sites, meta)
 		}
 	}
@@ -435,11 +465,40 @@ func (s *Store) ReadMeta(tenant, slug string) (SiteMeta, error) {
 	if err := validateTenant(tenant); err != nil {
 		return meta, err
 	}
+	if !ValidSlug(slug) {
+		return meta, fmt.Errorf("invalid slug %q", slug)
+	}
 	b, err := s.backend.Get(context.Background(), siteMetaCollection(tenant), slug)
 	if err != nil {
 		return meta, err
 	}
-	return meta, json.Unmarshal(b, &meta)
+	if err := json.Unmarshal(b, &meta); err != nil {
+		return meta, err
+	}
+	return normalizeSiteMeta(tenant, meta), nil
+}
+
+func (s *Store) UpdateSiteAuth(tenant, slug string, policy SiteAuthPolicy) (SiteMeta, error) {
+	if err := validateTenant(tenant); err != nil {
+		return SiteMeta{}, err
+	}
+	if !ValidSlug(slug) {
+		return SiteMeta{}, fmt.Errorf("invalid slug %q", slug)
+	}
+	meta, err := s.ReadMeta(tenant, slug)
+	if err != nil {
+		return SiteMeta{}, err
+	}
+	normalized, err := normalizeSiteAuthPolicy(tenant, policy)
+	if err != nil {
+		return SiteMeta{}, err
+	}
+	meta.Auth = normalized
+	meta.UpdatedAt = time.Now().UTC()
+	if err := s.writeMeta(tenant, meta); err != nil {
+		return SiteMeta{}, err
+	}
+	return meta, nil
 }
 
 func (s *Store) ReadData(tenant, slug string) (map[string]any, error) {
@@ -600,6 +659,7 @@ func (s *Store) writeTenant(meta TenantMeta) error {
 }
 
 func (s *Store) writeMeta(tenant string, meta SiteMeta) error {
+	meta = normalizeSiteMeta(tenant, meta)
 	b, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err
@@ -607,6 +667,97 @@ func (s *Store) writeMeta(tenant string, meta SiteMeta) error {
 	return s.backend.Put(context.Background(), siteMetaCollection(tenant), meta.Slug, b)
 }
 
+func (p SiteAuthPolicy) Allows(ownerTenant, username string, authenticated bool) bool {
+	switch p.Mode {
+	case SiteAuthNone:
+		return true
+	case SiteAuthOwner:
+		return authenticated && username == ownerTenant
+	case SiteAuthTenants:
+		if !authenticated {
+			return false
+		}
+		if len(p.Tenants) == 0 {
+			return true
+		}
+		for _, tenant := range p.Tenants {
+			if tenant == username {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func defaultSiteAuthPolicy(ownerTenant string) SiteAuthPolicy {
+	return SiteAuthPolicy{Mode: SiteAuthOwner}
+}
+
+func (s *Store) defaultSiteAuthPolicy() SiteAuthPolicy {
+	mode := strings.TrimSpace(s.defaultSiteAuthMode)
+	if mode == "" {
+		mode = SiteAuthOwner
+	}
+	return SiteAuthPolicy{Mode: mode}
+}
+
+func normalizeSiteMeta(ownerTenant string, meta SiteMeta) SiteMeta {
+	policy, err := normalizeSiteAuthPolicy(ownerTenant, meta.Auth)
+	if err != nil {
+		policy = defaultSiteAuthPolicy(ownerTenant)
+	}
+	meta.Auth = policy
+	return meta
+}
+
+func normalizeSiteAuthPolicy(ownerTenant string, policy SiteAuthPolicy) (SiteAuthPolicy, error) {
+	mode := strings.ToLower(strings.TrimSpace(policy.Mode))
+	if mode == "" {
+		return defaultSiteAuthPolicy(ownerTenant), nil
+	}
+	switch mode {
+	case SiteAuthNone:
+		return SiteAuthPolicy{Mode: SiteAuthNone}, nil
+	case SiteAuthOwner:
+		return SiteAuthPolicy{Mode: SiteAuthOwner}, nil
+	case SiteAuthTenants:
+		tenants, err := normalizeSiteAuthTenants(policy.Tenants)
+		if err != nil {
+			return SiteAuthPolicy{}, err
+		}
+		return SiteAuthPolicy{Mode: SiteAuthTenants, Tenants: tenants}, nil
+	default:
+		return SiteAuthPolicy{}, fmt.Errorf("invalid auth mode %q", policy.Mode)
+	}
+}
+
+func normalizeSiteAuthTenants(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	tenants := []string{}
+	for _, tenant := range raw {
+		tenant = strings.ToLower(strings.TrimSpace(tenant))
+		if tenant == "" {
+			continue
+		}
+		if !ValidSlug(tenant) {
+			return nil, fmt.Errorf("invalid tenant %q", tenant)
+		}
+		if !seen[tenant] {
+			seen[tenant] = true
+			tenants = append(tenants, tenant)
+		}
+	}
+	sort.Strings(tenants)
+	if len(tenants) == 0 {
+		return nil, nil
+	}
+	return tenants, nil
+}
 func (t TenantMeta) Public() PublicTenant {
 	return PublicTenant{
 		Username:  t.Username,
