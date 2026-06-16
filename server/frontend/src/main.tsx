@@ -30,6 +30,7 @@ interface Tenant {
   username: string;
   status: string;
   baseHost?: string;
+  dropTenantDomainPrefix?: boolean;
 }
 
 interface SiteDetails {
@@ -48,6 +49,7 @@ function App() {
   const [selected, setSelected] = useState("");
   const [details, setDetails] = useState<SiteDetails | null>(null);
   const [status, setStatus] = useState("");
+  const [setupOpen, setSetupOpen] = useState(false);
 
   const selectedSite = useMemo(() => sites.find((site) => site.slug === selected), [sites, selected]);
 
@@ -136,6 +138,9 @@ function App() {
       return `/s/${siteSlug}/`;
     }
     if (tenant.baseHost) {
+      if (tenant.dropTenantDomainPrefix !== false) {
+        return `${window.location.protocol}//${siteSlug}.${tenant.baseHost}/`;
+      }
       return `${window.location.protocol}//${tenant.username}--${siteSlug}.${tenant.baseHost}/`;
     }
     return `/t/${tenant.username}/s/${siteSlug}/`;
@@ -157,6 +162,9 @@ function App() {
         </a>
         <div className="flex items-center gap-3 text-sm">
           <span className="font-medium text-neutral-600">{tenant?.username}</span>
+          <button className="rounded-md border border-stone-300 bg-white px-3 py-1.5 font-medium text-neutral-700 hover:text-neutral-950" type="button" onClick={() => setSetupOpen(true)}>
+            Agent setup
+          </button>
           <a className="font-medium text-neutral-600 hover:text-neutral-950" href="/_flink/logout">
             Sign out
           </a>
@@ -256,7 +264,97 @@ function App() {
           {status}
         </div>
       </main>
+      {setupOpen && tenant ? <AgentSetupModal tenant={tenant} onClose={() => setSetupOpen(false)} /> : null}
     </div>
+  );
+}
+
+function AgentSetupModal({ tenant, onClose }: { tenant: Tenant; onClose: () => void }) {
+  const [active, setActive] = useState<"plugin" | "mcp" | "skill">("plugin");
+  const [copied, setCopied] = useState("");
+  const origin = window.location.origin;
+  const mcpURL = `${origin}/mcp`;
+  const snippets = setupSnippets(origin, mcpURL, tenant.username);
+
+  async function copy(label: string, value: string) {
+    await navigator.clipboard.writeText(value);
+    setCopied(label);
+    window.setTimeout(() => setCopied(""), 1800);
+  }
+
+  const panels = {
+    mcp: {
+      title: "MCP server",
+      text: "Connect Codex or another MCP client directly to this Flink tenant.",
+      value: snippets.mcp,
+      label: "MCP config",
+    },
+    skill: {
+      title: "Codex skill",
+      text: "Save this as a Flink skill so Codex knows when and how to use the server.",
+      value: snippets.skill,
+      label: "Skill",
+    },
+    plugin: {
+      title: "Plugin starter",
+      text: "Use this as a small local plugin scaffold that bundles the skill and MCP setup notes.",
+      value: snippets.plugin,
+      label: "Plugin",
+    },
+  };
+  const panel = panels[active];
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-labelledby="agent-setup-title">
+      <div className="grid max-h-[min(760px,calc(100vh-32px))] w-full max-w-3xl overflow-hidden rounded-md border border-stone-300 bg-white shadow-xl">
+        <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-4 py-3">
+          <div>
+            <h2 id="agent-setup-title" className="text-lg font-semibold">
+              Agent setup
+            </h2>
+            <p className="mt-1 text-sm text-neutral-600">Tenant {tenant.username} on {origin}</p>
+          </div>
+          <button className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium" type="button" onClick={onClose} autoFocus>
+            Close
+          </button>
+        </div>
+
+        <div className="grid gap-4 overflow-auto p-4">
+          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Agent setup options">
+            <SetupTab active={active === "plugin"} onClick={() => setActive("plugin")}>
+              Plugin
+            </SetupTab>
+            <SetupTab active={active === "mcp"} onClick={() => setActive("mcp")}>
+              MCP
+            </SetupTab>
+            <SetupTab active={active === "skill"} onClick={() => setActive("skill")}>
+              Skill
+            </SetupTab>
+          </div>
+
+          <section className="grid gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold">{panel.title}</h3>
+                <p className="mt-1 max-w-2xl text-sm text-neutral-600">{panel.text}</p>
+              </div>
+              <button className="rounded-md border border-teal-700 bg-teal-700 px-3 py-2 text-sm font-medium text-white" type="button" onClick={() => copy(panel.label, panel.value)}>
+                {copied === panel.label ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-stone-300 bg-stone-950 p-3 font-mono text-xs leading-5 text-stone-50">{panel.value}</pre>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SetupTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button className={active ? "rounded-md border border-teal-700 bg-teal-700 px-3 py-2 text-sm font-medium text-white" : "rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-neutral-700"} type="button" role="tab" aria-selected={active} onClick={onClick}>
+      {children}
+    </button>
   );
 }
 
@@ -336,6 +434,96 @@ function Table({ title, empty, children }: { title: string; empty: string; child
       </table>
     </div>
   );
+}
+
+function setupSnippets(origin: string, mcpURL: string, tenant: string) {
+  const mcp = `Flink MCP endpoint
+${mcpURL}
+
+Authentication
+HTTP Basic Auth
+username: ${tenant}
+password: <your Flink tenant password>
+
+For MCP clients that accept remote HTTP servers, configure:
+
+{
+  "mcpServers": {
+    "flink": {
+      "type": "http",
+      "url": "${mcpURL}",
+      "headers": {
+        "Authorization": "Basic <base64 of ${tenant}:your-password>"
+      }
+    }
+  }
+}
+
+Generate the Authorization header locally:
+
+printf '%s' '${tenant}:<your-password>' | base64
+
+Available tools include:
+- flink_list_sites
+- flink_get_site
+- flink_publish_site
+- flink_read_file
+- flink_write_file
+- flink_delete_file
+- flink_set_site_auth
+- flink_get_site_data
+- flink_set_site_data
+- flink_delete_site_data
+- flink_list_publishes
+- flink_rollback_site`;
+
+  const skill = `# Flink
+
+Use this skill when the user asks to publish, inspect, update, configure, or rollback Flink sites on this server.
+
+## Server
+
+- Flink server: ${origin}
+- MCP endpoint: ${mcpURL}
+- Tenant: ${tenant}
+- Auth: HTTP Basic Auth with tenant username and password.
+
+## Rules
+
+- Ask for the tenant password if it is not already available in a secure local configuration.
+- Never put tenant passwords, Basic Auth headers, API keys, or other secrets into hosted browser files.
+- Prefer the Flink MCP tools for site operations.
+- Keep sites owner-only unless the user explicitly asks to share them.
+- Use flink_publish_site for new publishes, then verify the returned URL.
+- Use flink_get_site and flink_read_file before editing an existing site.
+- Use flink_set_site_auth only when the user asks to change access.
+
+## Common Flows
+
+Publish a site:
+1. Prepare static files.
+2. Call \`flink_publish_site\` with the site slug and file list.
+3. Open or fetch the returned URL to verify the page loads.
+
+Update a site:
+1. Call \`flink_get_site\`.
+2. Read the files you need.
+3. Write or publish updated files.
+4. Verify the live URL.
+
+Configure access:
+- owner: only this tenant can view.
+- none: anonymous viewers can view and use allowed browser APIs.
+- tenants: approved tenants can view, optionally restricted to a tenant allow-list.`;
+
+  const plugin = `# Assumes FLINK_PASSWORD is already exported in this shell.
+curl -fsSL ${shellQuote(`${origin}/_flink/codex-plugin.sh`)} | FLINK_TENANT=${shellQuote(tenant)} sh`;
+
+  return { mcp, skill, plugin };
+}
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function formatDate(value: string) {

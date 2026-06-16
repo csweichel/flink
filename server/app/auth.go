@@ -152,10 +152,12 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, struct {
 		api.PublicTenant
-		BaseHost string `json:"baseHost,omitempty"`
+		BaseHost               string `json:"baseHost,omitempty"`
+		DropTenantDomainPrefix bool   `json:"dropTenantDomainPrefix"`
 	}{
-		PublicTenant: tenantFromContext(r.Context()),
-		BaseHost:     a.baseHost,
+		PublicTenant:           tenantFromContext(r.Context()),
+		BaseHost:               a.baseHost,
+		DropTenantDomainPrefix: a.config.DropTenantDomainPrefix,
 	}, nil)
 }
 

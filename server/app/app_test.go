@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -441,6 +442,46 @@ func TestSiteAuthPoliciesControlHostedSiteAccess(t *testing.T) {
 	}
 }
 
+func TestTenantlessDomainRoutingUsesUniqueSiteSlug(t *testing.T) {
+	a := testApp(t)
+	postJSON(t, a, "/api/sites", map[string]string{"slug": "public"})
+	putJSON(t, a, "/api/sites/public/auth", api.SiteAuthPolicy{Mode: api.SiteAuthNone})
+	putJSON(t, a, "/api/sites/public/files?path=index.html", map[string]string{"content": "public site"})
+
+	req := httptest.NewRequest(http.MethodGet, "https://public.quick.internal/", nil)
+	res := httptest.NewRecorder()
+	a.ServeHTTP(res, req)
+	if res.Code != http.StatusOK || res.Body.String() != "public site" {
+		t.Fatalf("tenantless public domain should resolve unique site: %d %q", res.Code, res.Body.String())
+	}
+
+	if _, err := a.store.CreateApprovedTenant("beta", testPassword); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/sites", bytes.NewReader([]byte(`{"slug":"public"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth("beta", testPassword)
+	res = httptest.NewRecorder()
+	a.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("beta site create failed: %d %s", res.Code, res.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "https://public.quick.internal/", nil)
+	res = httptest.NewRecorder()
+	a.ServeHTTP(res, req)
+	if bytes.Contains(res.Body.Bytes(), []byte("public site")) {
+		t.Fatalf("ambiguous tenantless domain should not serve a site: %d %q", res.Code, res.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "https://acme--public.quick.internal/", nil)
+	res = httptest.NewRecorder()
+	a.ServeHTTP(res, req)
+	if res.Code != http.StatusOK || res.Body.String() != "public site" {
+		t.Fatalf("tenant-qualified domain should still work: %d %q", res.Code, res.Body.String())
+	}
+}
+
 func TestDefaultSiteAuthModeConfigAppliesToNewSites(t *testing.T) {
 	a := testAppWithConfig(t, Config{DataDir: t.TempDir(), BaseHost: "quick.internal", DefaultSiteAuthMode: api.SiteAuthNone})
 	postJSON(t, a, "/api/sites", map[string]string{"slug": "public-default"})
@@ -459,6 +500,75 @@ func TestInvalidDefaultSiteAuthModeFailsInit(t *testing.T) {
 	a := New(Config{DataDir: t.TempDir(), DefaultSiteAuthMode: "bad-mode"})
 	if err := a.Init(); err == nil || !strings.Contains(err.Error(), "default site auth mode") {
 		t.Fatalf("expected invalid default site auth mode error, got %v", err)
+	}
+}
+
+func TestMCPPublishesAndInteractsWithSite(t *testing.T) {
+	a := testApp(t)
+	type mcpTestToolCall struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		IsError bool `json:"isError,omitempty"`
+	}
+	call := func(name string, args any) mcpTestToolCall {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name":      name,
+				"arguments": args,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := request(t, a, http.MethodPost, "/mcp", bytes.NewReader(body), "application/json")
+		if res.Code != http.StatusOK {
+			t.Fatalf("mcp call failed: %d %s", res.Code, res.Body.String())
+		}
+		var out struct {
+			Result mcpTestToolCall `json:"result"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.Result.IsError {
+			t.Fatalf("mcp tool returned error: %s", out.Result.Content[0].Text)
+		}
+		return out.Result
+	}
+
+	published := call("flink_publish_site", map[string]any{
+		"site":  "mcp-demo",
+		"title": "MCP demo",
+		"auth":  map[string]any{"mode": "none"},
+		"files": []map[string]string{
+			{"path": "index.html", "content": "mcp site"},
+			{"path": "assets/app.js", "content": "console.log('mcp')"},
+		},
+	})
+	if !strings.Contains(published.Content[0].Text, `"url": "https://mcp-demo.quick.internal/"`) {
+		t.Fatalf("publish result should include tenantless URL: %s", published.Content[0].Text)
+	}
+
+	res := rawRequest(t, a, http.MethodGet, "https://mcp-demo.quick.internal/", nil, "")
+	if res.Code != http.StatusOK || res.Body.String() != "mcp site" {
+		t.Fatalf("mcp-published site not served: %d %q", res.Code, res.Body.String())
+	}
+
+	call("flink_set_site_data", map[string]any{"site": "mcp-demo", "key": "note", "value": map[string]any{"text": "saved"}})
+	data := call("flink_get_site_data", map[string]any{"site": "mcp-demo", "key": "note"})
+	if !strings.Contains(data.Content[0].Text, `"text": "saved"`) {
+		t.Fatalf("mcp data get failed: %s", data.Content[0].Text)
+	}
+
+	file := call("flink_read_file", map[string]any{"site": "mcp-demo", "path": "index.html"})
+	if !strings.Contains(file.Content[0].Text, "mcp site") {
+		t.Fatalf("mcp file read failed: %s", file.Content[0].Text)
 	}
 }
 
@@ -496,8 +606,8 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 		"curl -L -o flink.tar.gz https://github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz",
 		"Use a Flink template early when starting from scratch",
 		"./flink init todo ./my-site --site my-site",
-		"https://<tenant>--<site>.quick.internal/",
-		"https://demo--my-site.quick.internal/",
+		"https://<site>.quick.internal/",
+		"https://my-site.quick.internal/",
 		"./flink publish ./dist --site my-site",
 		"./flink auth my-site none",
 		"./flink auth my-site tenants",
@@ -533,6 +643,33 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 		t.Fatalf("agent instructions alias failed: %d %s", res.Code, res.Body.String())
 	}
 
+	res = rawRequest(t, a, http.MethodGet, "/_flink/codex-plugin.sh", nil, "")
+	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "text/x-shellscript; charset=utf-8" || !bytes.Contains(res.Body.Bytes(), []byte("FLINK_TENANT")) || !bytes.Contains(res.Body.Bytes(), []byte("FLINK_PASSWORD")) || !bytes.Contains(res.Body.Bytes(), []byte("http://example.com")) {
+		t.Fatalf("codex plugin installer script failed: %d %s", res.Code, res.Body.String())
+	}
+	pluginDir := t.TempDir()
+	install := exec.Command("sh")
+	install.Env = append(os.Environ(), "CODEX_HOME="+pluginDir, "FLINK_TENANT=demo", "FLINK_PASSWORD=flink")
+	install.Stdin = bytes.NewReader(res.Body.Bytes())
+	if out, err := install.CombinedOutput(); err != nil {
+		t.Fatalf("codex plugin installer script should run: %v\n%s", err, out)
+	}
+	if b, err := os.ReadFile(filepath.Join(pluginDir, "plugins/flink/mcp.config.json")); err != nil || !bytes.Contains(b, []byte("Authorization")) {
+		t.Fatalf("codex plugin installer did not write MCP config: %v %s", err, b)
+	}
+	missingPassword := exec.Command("sh")
+	missingPassword.Env = []string{"CODEX_HOME=" + t.TempDir(), "FLINK_TENANT=demo"}
+	missingPassword.Stdin = bytes.NewReader(res.Body.Bytes())
+	if out, err := missingPassword.CombinedOutput(); err == nil || !bytes.Contains(out, []byte("FLINK_PASSWORD")) {
+		t.Fatalf("codex plugin installer should verify FLINK_PASSWORD: err=%v out=%s", err, out)
+	}
+	missingTenant := exec.Command("sh")
+	missingTenant.Env = []string{"CODEX_HOME=" + t.TempDir(), "FLINK_PASSWORD=flink"}
+	missingTenant.Stdin = bytes.NewReader(res.Body.Bytes())
+	if out, err := missingTenant.CombinedOutput(); err == nil || !bytes.Contains(out, []byte("FLINK_TENANT")) {
+		t.Fatalf("codex plugin installer should verify FLINK_TENANT: err=%v out=%s", err, out)
+	}
+
 	res = rawRequest(t, a, http.MethodGet, "/.well-known/flink.json", nil, "")
 	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != "application/json; charset=utf-8" {
 		t.Fatalf("discovery JSON failed: status=%d content-type=%q body=%s", res.Code, res.Header().Get("Content-Type"), res.Body.String())
@@ -555,10 +692,10 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &discovery); err != nil {
 		t.Fatal(err)
 	}
-	if discovery.Type != "flink" || discovery.SiteURLTemplate != "https://{tenant}--{site}.quick.internal/" || discovery.AgentInstructions == "" || len(discovery.RequiredEnv) != 2 || len(discovery.Commands) != 7 {
+	if discovery.Type != "flink" || discovery.SiteURLTemplate != "https://{site}.quick.internal/" || discovery.AgentInstructions == "" || len(discovery.RequiredEnv) != 2 || len(discovery.Commands) != 7 {
 		t.Fatalf("unexpected discovery JSON: %#v", discovery)
 	}
-	if len(discovery.APIEndpoints) == 0 || discovery.APIEndpoints[0].URL != "http://example.com/api/sites/{site}/data/{key}" || !strings.Contains(discovery.APIEndpoints[0].Auth, "HTTP Basic Auth") {
+	if len(discovery.APIEndpoints) == 0 || discovery.APIEndpoints[0].URL != "http://example.com/mcp" || discovery.APIEndpoints[0].Name != "mcp" || !strings.Contains(discovery.APIEndpoints[0].Auth, "HTTP Basic Auth") {
 		t.Fatalf("discovery JSON missing API endpoint descriptions: %#v", discovery.APIEndpoints)
 	}
 

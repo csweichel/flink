@@ -22,6 +22,8 @@ type Config struct {
 	DataDir                   string `yaml:"dataDir"`
 	StorageDriver             string `yaml:"storage"`
 	BaseHost                  string `yaml:"baseHost"`
+	DropTenantDomainPrefix    bool   `yaml:"dropTenantDomainPrefix"`
+	DropTenantDomainPrefixSet bool   `yaml:"-"`
 	AutoApproveTenants        bool   `yaml:"autoApproveTenants"`
 	DisableTenantRegistration bool   `yaml:"disableTenantRegistration"`
 	DefaultSiteAuthMode       string `yaml:"defaultSiteAuthMode"`
@@ -36,9 +38,13 @@ type App struct {
 	aiClient *api.AIClient
 	baseHost string
 	mux      *http.ServeMux
+	mcp      http.Handler
 }
 
 func New(config Config) *App {
+	if !config.DropTenantDomainPrefixSet {
+		config.DropTenantDomainPrefix = true
+	}
 	app := &App{
 		config:   config,
 		hub:      api.NewHub(),
@@ -46,6 +52,7 @@ func New(config Config) *App {
 		baseHost: strings.TrimPrefix(strings.ToLower(config.BaseHost), "."),
 		mux:      http.NewServeMux(),
 	}
+	app.mcp = app.newMCPHandler()
 	app.routes()
 	return app
 }
@@ -87,6 +94,7 @@ func (a *App) routes() {
 	a.mux.HandleFunc("GET /_flink/register", a.handleRegister)
 	a.mux.HandleFunc("POST /_flink/register", a.handleRegister)
 	a.mux.HandleFunc("GET /_flink/logout", a.handleLogout)
+	a.mux.HandleFunc("GET /_flink/codex-plugin.sh", a.handleCodexPluginScript)
 	a.mux.HandleFunc("GET /_flink", a.requireTenant(a.dashboard))
 	a.mux.HandleFunc("GET /_flink/", a.requireTenant(a.dashboard))
 	a.mux.HandleFunc("GET /llms.txt", a.handleLLMSTXT)
@@ -94,6 +102,7 @@ func (a *App) routes() {
 	a.mux.HandleFunc("GET /.well-known/flink.json", a.handleDiscoveryJSON)
 	a.mux.HandleFunc("GET /flink-logo.png", a.handleLogo)
 	a.mux.HandleFunc("GET /favicon.ico", a.handleLogo)
+	a.mux.HandleFunc("POST /mcp", a.requireTenant(a.handleMCP))
 	a.mux.HandleFunc("GET /flink.js", func(w http.ResponseWriter, r *http.Request) {
 		b, err := frontend.ReadClientJS()
 		if err != nil {
@@ -548,12 +557,62 @@ func (a *App) resolveSite(r *http.Request, defaultTenant string) (string, string
 			if len(parts) == 2 && api.ValidSlug(parts[0]) && api.ValidSlug(parts[1]) {
 				return parts[0], parts[1], strings.TrimPrefix(r.URL.Path, "/")
 			}
-			if api.ValidSlug(label) {
+			if api.ValidSlug(label) && a.config.DropTenantDomainPrefix {
+				if defaultTenant == "" {
+					if tenant, ok := a.resolveTenantlessDomainSite(label); ok {
+						return tenant, label, strings.TrimPrefix(r.URL.Path, "/")
+					}
+					return "", "", ""
+				}
 				return defaultTenant, label, strings.TrimPrefix(r.URL.Path, "/")
 			}
 		}
 	}
 	return "", "", ""
+}
+
+func (a *App) resolveTenantlessDomainSite(slug string) (string, bool) {
+	tenants, err := a.store.ListTenants(api.TenantApproved)
+	if err != nil {
+		return "", false
+	}
+	found := ""
+	for _, tenant := range tenants {
+		sites, err := a.store.ListSites(tenant.Username)
+		if err != nil {
+			continue
+		}
+		for _, site := range sites {
+			if site.Slug == slug {
+				if found != "" {
+					return "", false
+				}
+				found = tenant.Username
+				break
+			}
+		}
+	}
+	return found, found != ""
+}
+
+func (a *App) siteURL(origin, tenant, slug string) string {
+	if a.baseHost == "" {
+		return strings.TrimRight(origin, "/") + "/t/" + tenant + "/s/" + slug + "/"
+	}
+	if a.config.DropTenantDomainPrefix {
+		return "https://" + slug + "." + a.baseHost + "/"
+	}
+	return "https://" + tenant + "--" + slug + "." + a.baseHost + "/"
+}
+
+func (a *App) siteURLTemplate(origin string) string {
+	if a.baseHost == "" {
+		return strings.TrimRight(origin, "/") + "/t/{tenant}/s/{site}/"
+	}
+	if a.config.DropTenantDomainPrefix {
+		return "https://{site}." + a.baseHost + "/"
+	}
+	return "https://{tenant}--{site}." + a.baseHost + "/"
 }
 
 func writeJSON(w http.ResponseWriter, v any, err error) {

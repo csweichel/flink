@@ -25,13 +25,15 @@ type flinkDiscovery struct {
 	Commands          []string                 `json:"commands"`
 	APIEndpoints      []apiEndpointDescription `json:"api_endpoints"`
 
-	CLIBase        string `json:"-"`
-	BaseHost       string `json:"-"`
-	DomainHosting  bool   `json:"-"`
-	SiteURLPattern string `json:"-"`
-	IndexURL       string `json:"-"`
-	AssetURL       string `json:"-"`
-	DocsURL        string `json:"-"`
+	CLIBase                string `json:"-"`
+	BaseHost               string `json:"-"`
+	DomainHosting          bool   `json:"-"`
+	DropTenantDomainPrefix bool   `json:"drop_tenant_domain_prefix"`
+	SiteURLPattern         string `json:"-"`
+	ExampleSiteURL         string `json:"-"`
+	IndexURL               string `json:"-"`
+	AssetURL               string `json:"-"`
+	DocsURL                string `json:"-"`
 }
 
 type apiEndpointDescription struct {
@@ -69,10 +71,19 @@ func (a *App) handleDiscoveryJSON(w http.ResponseWriter, r *http.Request) {
 func (a *App) llmsTXT(r *http.Request) (string, error) {
 	data := a.discovery(r)
 	if data.DomainHosting {
-		data.SiteURLPattern = "https://<tenant>--<site>." + data.BaseHost + "/"
-		data.IndexURL = "https://<tenant>--<site>." + data.BaseHost + "/"
-		data.AssetURL = "https://<tenant>--<site>." + data.BaseHost + "/assets/app.css"
-		data.DocsURL = "https://<tenant>--<site>." + data.BaseHost + "/docs/"
+		if a.config.DropTenantDomainPrefix {
+			data.SiteURLPattern = "https://<site>." + data.BaseHost + "/"
+			data.ExampleSiteURL = "https://my-site." + data.BaseHost + "/"
+			data.IndexURL = "https://<site>." + data.BaseHost + "/"
+			data.AssetURL = "https://<site>." + data.BaseHost + "/assets/app.css"
+			data.DocsURL = "https://<site>." + data.BaseHost + "/docs/"
+		} else {
+			data.SiteURLPattern = "https://<tenant>--<site>." + data.BaseHost + "/"
+			data.ExampleSiteURL = "https://demo--my-site." + data.BaseHost + "/"
+			data.IndexURL = "https://<tenant>--<site>." + data.BaseHost + "/"
+			data.AssetURL = "https://<tenant>--<site>." + data.BaseHost + "/assets/app.css"
+			data.DocsURL = "https://<tenant>--<site>." + data.BaseHost + "/docs/"
+		}
 	} else {
 		data.SiteURLPattern = data.Server + "/t/<tenant>/s/<site>/"
 		data.IndexURL = data.Server + "/t/<tenant>/s/<site>/"
@@ -90,17 +101,13 @@ func (a *App) llmsTXT(r *http.Request) (string, error) {
 func (a *App) discovery(r *http.Request) flinkDiscovery {
 	origin := requestOrigin(r)
 	cliBase := "https://github.com/csweichel/flink/releases/latest/download/"
-	siteURLTemplate := origin + "/t/{tenant}/s/{site}/"
-	if a.baseHost != "" {
-		siteURLTemplate = "https://{tenant}--{site}." + a.baseHost + "/"
-	}
 	return flinkDiscovery{
 		Type:              "flink",
 		Server:            origin,
 		AgentInstructions: origin + "/_flink/agent-instructions",
 		RequiredEnv:       []string{"FLINK_TENANT", "FLINK_PASSWORD"},
 		CLI:               cliBase + "flink_linux_amd64.tar.gz",
-		SiteURLTemplate:   siteURLTemplate,
+		SiteURLTemplate:   a.siteURLTemplate(origin),
 		Commands: []string{
 			"flink publish ./dist --site <site>",
 			"flink auth <site> none",
@@ -111,6 +118,7 @@ func (a *App) discovery(r *http.Request) flinkDiscovery {
 			"flink agent respond <site> <message>",
 		},
 		APIEndpoints: []apiEndpointDescription{
+			{Name: "mcp", Method: "POST", URL: origin + "/mcp", Auth: "HTTP Basic Auth with tenant username and password"},
 			{Name: "storage_get", Method: "GET", URL: origin + "/api/sites/{site}/data/{key}", Auth: "HTTP Basic Auth with tenant username and password"},
 			{Name: "storage_set", Method: "PUT", URL: origin + "/api/sites/{site}/data/{key}", Auth: "HTTP Basic Auth with tenant username and password"},
 			{Name: "storage_all", Method: "GET", URL: origin + "/api/sites/{site}/data/", Auth: "HTTP Basic Auth with tenant username and password"},
@@ -128,9 +136,10 @@ func (a *App) discovery(r *http.Request) flinkDiscovery {
 			{Name: "browser_agent_message", Method: "POST", URL: origin + "/api/public/t/{tenant}/s/{site}/agent/messages", Auth: "owning tenant session cookie or HTTP Basic Auth; only when site access is owner and agent messages are enabled"},
 			{Name: "browser_agent_responses", Method: "GET", URL: origin + "/api/public/t/{tenant}/s/{site}/agent/responses", Auth: "owning tenant session cookie or HTTP Basic Auth; only when site access is owner and agent messages are enabled"},
 		},
-		CLIBase:       cliBase,
-		BaseHost:      a.baseHost,
-		DomainHosting: a.baseHost != "",
+		CLIBase:                cliBase,
+		BaseHost:               a.baseHost,
+		DomainHosting:          a.baseHost != "",
+		DropTenantDomainPrefix: a.config.DropTenantDomainPrefix,
 	}
 }
 

@@ -15,6 +15,7 @@ Use Flink when you want to tell your coding agent: "publish this prototype to my
 - [Guidance For AI Agents Building Sites](#guidance-for-ai-agents-building-sites)
 - [Browser APIs For Hosted Sites](#browser-apis-for-hosted-sites)
 - [HTTP And CLI Site APIs](#http-and-cli-site-apis)
+- [Agent Integrations](#agent-integrations)
 - [Agent Message Mode](#agent-message-mode)
 - [Host A Flink Server](#host-a-flink-server)
   - [Docker](#docker)
@@ -45,19 +46,19 @@ https://<flink-server>/_flink
 
 Sign in to list sites, inspect hosted files, inspect JSON state, download or delete uploads, visit sites, delete sites, and download a complete site archive.
 
-On a normal Flink server with wildcard DNS configured, open a published site at its tenant-scoped domain:
+On a normal Flink server with wildcard DNS configured, open a published site at its site domain:
 
 ```text
-https://<tenant>--<site>.<flink-base-host>/
+https://<site>.<flink-base-host>/
 ```
 
 For example:
 
 ```text
-https://demo--hello.flink.internal/
+https://hello.flink.internal/
 ```
 
-Path-based hosting is only the fallback for local development or servers without `baseHost` configured: `https://<flink-server>/t/<tenant>/s/<site>/`.
+Path-based hosting is only the fallback for local development or servers without `baseHost` configured: `https://<flink-server>/t/<tenant>/s/<site>/`. Servers can set `dropTenantDomainPrefix: false` to use tenant-qualified domains such as `https://<tenant>--<site>.<flink-base-host>/`.
 
 ## Publish With The User CLI
 
@@ -86,13 +87,13 @@ bin/flink --server https://flink.internal --tenant demo --password flink publish
 Files are served from the same site base. For example, `./dist/assets/app.css` is available at:
 
 ```text
-https://demo--hello.flink.internal/assets/app.css
+https://hello.flink.internal/assets/app.css
 ```
 
 Directory indexes are served as expected, so `./dist/docs/index.html` is available at:
 
 ```text
-https://demo--hello.flink.internal/docs/
+https://hello.flink.internal/docs/
 ```
 
 When running locally on `localhost` without wildcard DNS, use the fallback path form instead: `http://localhost:8080/t/demo/s/hello/`.
@@ -164,7 +165,7 @@ bin/flink publish ./dist --site my-site
 Then open:
 
 ```text
-https://$FLINK_TENANT--my-site.<flink-base-host>/
+https://my-site.<flink-base-host>/
 ```
 
 If the server has no `baseHost`, use the fallback URL printed by the CLI.
@@ -291,6 +292,77 @@ Discovery endpoints are public:
 /.well-known/flink.json
 ```
 
+## Agent Integrations
+
+Flink exposes an authenticated MCP server at:
+
+```text
+https://<flink-server>/mcp
+```
+
+The MCP endpoint uses HTTP Basic Auth with the tenant username and password. It is tenant-scoped, so MCP tools can only see and mutate sites owned by the authenticated tenant.
+
+For MCP clients that accept remote HTTP servers, configure:
+
+```json
+{
+  "mcpServers": {
+    "flink": {
+      "type": "http",
+      "url": "https://flink.internal/mcp",
+      "headers": {
+        "Authorization": "Basic <base64 of demo:your-password>"
+      }
+    }
+  }
+}
+```
+
+Available MCP tools include:
+
+```text
+flink_list_sites
+flink_get_site
+flink_publish_site
+flink_read_file
+flink_write_file
+flink_delete_file
+flink_set_site_auth
+flink_get_site_data
+flink_set_site_data
+flink_delete_site_data
+flink_list_publishes
+flink_rollback_site
+```
+
+The signed-in dashboard has an `Agent setup` button. It opens a modal with three tabs:
+
+```text
+Plugin   curl-pipe installer for a local Codex plugin
+MCP      direct remote MCP configuration details
+Skill    a Codex skill prompt for using this Flink tenant
+```
+
+The plugin installer is served by the Flink server itself:
+
+```sh
+export FLINK_PASSWORD=<your-password>
+curl -fsSL https://flink.internal/_flink/codex-plugin.sh | FLINK_TENANT=demo sh
+```
+
+The script verifies the required environment before writing files. It expects `FLINK_PASSWORD` to already be in the shell environment, receives `FLINK_TENANT` from the command above, and installs under `$CODEX_HOME/plugins/flink` or `~/.codex/plugins/flink` when `CODEX_HOME` is unset.
+
+The generated plugin contains:
+
+```text
+.codex-plugin/plugin.json
+skills/flink/SKILL.md
+mcp.config.json
+MCP.md
+```
+
+The generated skill tells Codex to use the Flink MCP tools for publishing, inspecting, updating, configuring access, reading site files, and rolling back sites. It also reminds the agent not to place tenant passwords, Basic Auth headers, API keys, or other secrets into hosted browser files.
+
 ## Agent Message Mode
 
 Owner-only sites can show a small message widget that lets the signed-in owner send instructions to an agent. The mode is intentionally limited to `owner` access. Enabling it fails for `none` or `tenants` sites, and changing a site away from `owner` disables the widget.
@@ -372,6 +444,7 @@ addr: :8080
 dataDir: /home/alice/.local/share/flink/data
 storage: bbolt
 baseHost: flink.internal
+dropTenantDomainPrefix: true
 autoApproveTenants: false
 disableTenantRegistration: false
 defaultSiteAuthMode: owner
@@ -382,7 +455,7 @@ ai:
 bootstrapTenants: []
 ```
 
-For shared environments, set `baseHost` to the wildcard domain and route both the base domain and wildcard subdomains to the Flink server.
+For shared environments, set `baseHost` to the wildcard domain and route both the base domain and wildcard subdomains to the Flink server. Published sites use `https://<site>.<baseHost>/` by default. Set `dropTenantDomainPrefix: false` if you need tenant-qualified domains like `https://<tenant>--<site>.<baseHost>/`.
 
 In high-trust environments, new tenants can be approved automatically:
 
@@ -430,10 +503,10 @@ If the server should start at boot without an active login session, enable linge
 loginctl enable-linger "$USER"
 ```
 
-With wildcard DNS and `baseHost` configured, tenant site domains are served as:
+With wildcard DNS and `baseHost` configured, site domains are served as:
 
 ```text
-https://alice--demo.flink.internal/
+https://demo.flink.internal/
 ```
 
 Path-based hosting works without wildcard DNS, but treat it as a fallback:
@@ -460,7 +533,7 @@ baseHost: flink.example.com
 Published sites will use domain-based URLs such as:
 
 ```text
-https://alice--demo.flink.example.com/
+https://demo.flink.example.com/
 ```
 
 Use path-based URLs only when the tunnel cannot route wildcard hostnames:
@@ -525,7 +598,7 @@ baseHost: flink.tailnet.internal
 This keeps the normal Flink site shape inside the tailnet:
 
 ```text
-https://alice--demo.flink.tailnet.internal/
+https://demo.flink.tailnet.internal/
 ```
 
 If you only use the machine's Tailscale MagicDNS name and do not have wildcard DNS, leave `baseHost` empty and use path-based URLs.
