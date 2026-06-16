@@ -50,7 +50,7 @@ Use this exact URL pattern for published websites:
 
 For example, tenant demo and site my-site will be available at:
 
-https://demo--my-site.{{.BaseHost}}/
+{{.ExampleSiteURL}}
 {{end}}
 
 For multi-file websites, publish a directory. Paths are preserved under the same {{if .DomainHosting}}domain{{else}}site base{{end}}:
@@ -199,3 +199,4 @@ Use these public endpoints to rediscover this guidance and the machine-readable 
 - /llms.txt
 - /_flink/agent-instructions
 - /.well-known/flink.json
+- /mcp

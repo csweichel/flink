@@ -153,7 +153,7 @@ func canonicalSiteURL(server, tenant, slug string) string {
 	u.Path = strings.TrimRight(u.Path, "/")
 	host := u.Hostname()
 	if u.Port() == "" && u.EscapedPath() == "" && host != "localhost" {
-		return u.Scheme + "://" + tenant + "--" + slug + "." + host + "/"
+		return u.Scheme + "://" + slug + "." + host + "/"
 	}
 	return strings.TrimRight(u.String(), "/") + "/t/" + tenant + "/s/" + slug + "/"
 }

@@ -21,6 +21,8 @@ func runServe(configPath string, options Options) error {
 		DataDir:                   cfg.DataDir,
 		StorageDriver:             cfg.StorageDriver,
 		BaseHost:                  cfg.BaseHost,
+		DropTenantDomainPrefix:    cfg.DropTenantDomainPrefix,
+		DropTenantDomainPrefixSet: cfg.DropTenantDomainPrefixSet,
 		AutoApproveTenants:        cfg.AutoApproveTenants,
 		DisableTenantRegistration: cfg.DisableTenantRegistration,
 		DefaultSiteAuthMode:       cfg.DefaultSiteAuthMode,

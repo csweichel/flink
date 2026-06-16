@@ -13,6 +13,8 @@ type serverConfig struct {
 	DataDir                   string                  `yaml:"dataDir"`
 	StorageDriver             string                  `yaml:"storage"`
 	BaseHost                  string                  `yaml:"baseHost"`
+	DropTenantDomainPrefix    bool                    `yaml:"dropTenantDomainPrefix"`
+	DropTenantDomainPrefixSet bool                    `yaml:"-"`
 	AutoApproveTenants        bool                    `yaml:"autoApproveTenants"`
 	DisableTenantRegistration bool                    `yaml:"disableTenantRegistration"`
 	DefaultSiteAuthMode       string                  `yaml:"defaultSiteAuthMode"`
@@ -31,6 +33,8 @@ func defaultServerConfig() serverConfig {
 		DataDir:                   "./data",
 		StorageDriver:             "file",
 		BaseHost:                  "",
+		DropTenantDomainPrefix:    true,
+		DropTenantDomainPrefixSet: true,
 		AutoApproveTenants:        false,
 		DisableTenantRegistration: false,
 		DefaultSiteAuthMode:       api.SiteAuthOwner,
@@ -66,6 +70,14 @@ func applyConfigFile(cfg *serverConfig, configPath string) error {
 		return err
 	}
 	applyConfigValues(cfg, fileCfg)
+	var raw map[string]any
+	if err := yaml.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["dropTenantDomainPrefix"]; ok {
+		cfg.DropTenantDomainPrefix = fileCfg.DropTenantDomainPrefix
+		cfg.DropTenantDomainPrefixSet = true
+	}
 	return nil
 }
 
@@ -81,6 +93,10 @@ func applyConfigValues(cfg *serverConfig, override serverConfig) {
 	}
 	if override.BaseHost != "" {
 		cfg.BaseHost = override.BaseHost
+	}
+	if override.DropTenantDomainPrefixSet {
+		cfg.DropTenantDomainPrefix = override.DropTenantDomainPrefix
+		cfg.DropTenantDomainPrefixSet = true
 	}
 	if override.AutoApproveTenants {
 		cfg.AutoApproveTenants = true

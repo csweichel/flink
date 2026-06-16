@@ -44,6 +44,7 @@ func TestRunInitWritesDefaultYAMLConfig(t *testing.T) {
 		"addr: :8080",
 		"dataDir: ./data",
 		"storage: file",
+		"dropTenantDomainPrefix: true",
 		"disableTenantRegistration: false",
 		"defaultSiteAuthMode: owner",
 		"baseURL: https://api.openai.com/v1",
@@ -89,6 +90,7 @@ baseHost: file.internal
 autoApproveTenants: true
 disableTenantRegistration: true
 defaultSiteAuthMode: none
+dropTenantDomainPrefix: false
 ai:
   apiKey: test-key
   baseURL: http://ai.local/v1
@@ -116,6 +118,9 @@ bootstrapTenants:
 	}
 	if cfg.DefaultSiteAuthMode != api.SiteAuthNone {
 		t.Fatalf("unexpected default site auth mode: %q", cfg.DefaultSiteAuthMode)
+	}
+	if cfg.DropTenantDomainPrefix {
+		t.Fatal("expected dropTenantDomainPrefix from config")
 	}
 	if cfg.AI.APIKey != "test-key" || cfg.AI.BaseURL != "http://ai.local/v1" || cfg.AI.Model != "test-model" {
 		t.Fatalf("unexpected AI config: %#v", cfg.AI)
