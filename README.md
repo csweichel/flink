@@ -64,24 +64,26 @@ Path-based hosting is only the fallback for local development or servers without
 
 The `flink` CLI is for website authors and agents. It only talks to a running Flink server over HTTP.
 
-Download the CLI from the latest release:
+Download the CLI from the latest release once into a stable user bin directory:
 
 ```sh
-curl -L -o flink.tar.gz https://github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz
-tar -xzf flink.tar.gz
+mkdir -p "$HOME/.local/bin" "$HOME/.cache/flink"
+curl -L -o "$HOME/.cache/flink/flink_linux_amd64.tar.gz" https://github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz
+tar -xzf "$HOME/.cache/flink/flink_linux_amd64.tar.gz" -C "$HOME/.local/bin" flink
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Create a new prototype from a built-in template:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink init todo ./hello --site hello
+flink --server https://flink.internal --tenant demo --password flink init todo ./hello --site hello
 ```
 
 Publish a single file or whole directory tree. `publish` creates the site when needed, uploads current files, removes stale hosted files, records publish history, and prints the live URL:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink publish ./hello --site hello
-bin/flink --server https://flink.internal --tenant demo --password flink publish ./dist --site hello
+flink --server https://flink.internal --tenant demo --password flink publish ./hello --site hello
+flink --server https://flink.internal --tenant demo --password flink publish ./dist --site hello
 ```
 
 Files are served from the same site base. For example, `./dist/assets/app.css` is available at:
@@ -101,18 +103,18 @@ When running locally on `localhost` without wildcard DNS, use the fallback path 
 List sites:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink list
-bin/flink --server https://flink.internal --tenant demo --password flink inspect hello
+flink --server https://flink.internal --tenant demo --password flink list
+flink --server https://flink.internal --tenant demo --password flink inspect hello
 ```
 
 Sites use the server's `defaultSiteAuthMode` when created. On the default server config, sites are private to the publishing tenant. Change who can view the hosted site and use its browser storage, upload, realtime, and AI APIs:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink auth hello
-bin/flink --server https://flink.internal --tenant demo --password flink auth hello owner
-bin/flink --server https://flink.internal --tenant demo --password flink auth hello none
-bin/flink --server https://flink.internal --tenant demo --password flink auth hello tenants
-bin/flink --server https://flink.internal --tenant demo --password flink auth hello tenants demo alice
+flink --server https://flink.internal --tenant demo --password flink auth hello
+flink --server https://flink.internal --tenant demo --password flink auth hello owner
+flink --server https://flink.internal --tenant demo --password flink auth hello none
+flink --server https://flink.internal --tenant demo --password flink auth hello tenants
+flink --server https://flink.internal --tenant demo --password flink auth hello tenants demo alice
 ```
 
 Auth modes are `owner`, `none`, and `tenants`. `tenants` with no tenant list allows any approved tenant. `tenants <tenant>...` allows only the listed tenants.
@@ -120,15 +122,15 @@ Auth modes are `owner`, `none`, and `tenants`. `tenants` with no tenant list all
 Inspect publish history, roll back to a previous publish, or export a static snapshot:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink history hello
-bin/flink --server https://flink.internal --tenant demo --password flink rollback hello
-bin/flink --server https://flink.internal --tenant demo --password flink snapshot hello ./hello-snapshot
+flink --server https://flink.internal --tenant demo --password flink history hello
+flink --server https://flink.internal --tenant demo --password flink rollback hello
+flink --server https://flink.internal --tenant demo --password flink snapshot hello ./hello-snapshot
 ```
 
 Use `--json` on commands when an agent or script needs machine-readable output:
 
 ```sh
-bin/flink --server https://flink.internal --tenant demo --password flink publish ./dist --site hello --json
+flink --server https://flink.internal --tenant demo --password flink publish ./dist --site hello --json
 ```
 
 To avoid repeating flags:
@@ -138,9 +140,9 @@ export FLINK_SERVER=https://flink.internal
 export FLINK_TENANT=demo
 export FLINK_PASSWORD=flink
 
-bin/flink init blank ./hello --site hello
-bin/flink publish ./hello
-bin/flink open hello
+flink init blank ./hello --site hello
+flink publish ./hello
+flink open hello
 ```
 
 ## Guidance For AI Agents Building Sites
@@ -159,7 +161,7 @@ When an agent is asked to build and deploy a Flink-hosted website:
 Minimal publish loop:
 
 ```sh
-bin/flink publish ./dist --site my-site
+flink publish ./dist --site my-site
 ```
 
 Then open:
@@ -244,16 +246,16 @@ export FLINK_PASSWORD=flink
 The CLI wraps the authenticated owner API:
 
 ```sh
-bin/flink api data set hello note '{"text":"saved"}'
-bin/flink api data get hello note
-bin/flink api data all hello
-bin/flink api files list hello
-bin/flink api files read hello index.html
-bin/flink api files write hello index.html ./index.html
-bin/flink api uploads upload hello ./image.png
-bin/flink api uploads list hello
-bin/flink api uploads fetch hello /uploads/demo/hello/image.png
-bin/flink api ai hello "Give me a prototype idea"
+flink api data set hello note '{"text":"saved"}'
+flink api data get hello note
+flink api data all hello
+flink api files list hello
+flink api files read hello index.html
+flink api files write hello index.html ./index.html
+flink api uploads upload hello ./image.png
+flink api uploads list hello
+flink api uploads fetch hello /uploads/demo/hello/image.png
+flink api ai hello "Give me a prototype idea"
 ```
 
 Use `--json` when a command has a human-friendly default, such as `files read` or `api ai`.
@@ -361,23 +363,23 @@ mcp.config.json
 MCP.md
 ```
 
-The generated skill tells Codex to use the Flink MCP tools for publishing, inspecting, updating, configuring access, reading site files, and rolling back sites. It also reminds the agent not to place tenant passwords, Basic Auth headers, API keys, or other secrets into hosted browser files.
+The generated skill tells Codex to use the Flink MCP tools for publishing, inspecting, updating, configuring access, reading site files, and rolling back sites. It also reminds the agent not to place tenant passwords, Basic Auth headers, API keys, or other secrets into hosted browser files, and to reuse one CLI installation instead of downloading a copy per site.
 
 ## Agent Message Mode
 
 Owner-only sites can show a small message widget that lets the signed-in owner send instructions to an agent. The mode is intentionally limited to `owner` access. Enabling it fails for `none` or `tenants` sites, and changing a site away from `owner` disables the widget.
 
 ```sh
-bin/flink auth hello owner
-bin/flink agent enable hello
-bin/flink agent status hello
-bin/flink agent respond hello "I updated the page and restarted the listener."
+flink auth hello owner
+flink agent enable hello
+flink agent status hello
+flink agent respond hello "I updated the page and restarted the listener."
 ```
 
 An agent starts one blocking listener and leaves it running:
 
 ```sh
-bin/flink agent listen hello
+flink agent listen hello
 ```
 
 If messages were already sent, `listen` prints them immediately. It then connects to the site's realtime room and blocks, printing each new message as it arrives. When a message arrives, the CLI acknowledges it, prints the message, saves any included screenshot under `/tmp/flink-agent-screenshots`, shows the site URL, and tells the agent to respond with `flink agent respond hello <message>` and update the site with `flink publish <path> --site hello` when needed. Keep the listener process attached while using another command to publish or respond; it is the blocking wake-up point for future user requests. Use `--once` only for scripts that deliberately want to handle a single message and exit.

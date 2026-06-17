@@ -603,15 +603,16 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 		"Deployment flow:",
 		"github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz",
 		"Do not ask the user to clone the repository or build the CLI from source",
-		"curl -L -o flink.tar.gz https://github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz",
+		"reuse that same executable for every site and deployment",
+		`curl -L -o "$HOME/.cache/flink/flink_linux_amd64.tar.gz" https://github.com/csweichel/flink/releases/latest/download/flink_linux_amd64.tar.gz`,
 		"Use a Flink template early when starting from scratch",
-		"./flink init todo ./my-site --site my-site",
+		"flink init todo ./my-site --site my-site",
 		"https://<site>.quick.internal/",
 		"https://my-site.quick.internal/",
-		"./flink publish ./dist --site my-site",
-		"./flink auth my-site none",
-		"./flink auth my-site tenants",
-		"./flink auth my-site tenants <tenant>...",
+		"flink publish ./dist --site my-site",
+		"flink auth my-site none",
+		"flink auth my-site tenants",
+		"flink auth my-site tenants <tenant>...",
 		"Never put `FLINK_PASSWORD`, tenant passwords, Basic Auth headers, API credentials, or other secrets into published browser files.",
 		"Existing site update: inspect the site, read existing files if needed, make the requested change, publish back to the same site, and verify the live URL.",
 		"`flink.get(key)`, `flink.set(key, value)`, `flink.all()`, `flink.del(key)` for JSON storage.",
@@ -623,6 +624,9 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 	}
 	if bytes.Contains(res.Body.Bytes(), []byte("/t/<tenant>/s/<site>/")) || bytes.Contains(res.Body.Bytes(), []byte("/s/<site>/")) {
 		t.Fatalf("domain-configured llms.txt should not mention path-based hosting:\n%s", res.Body.String())
+	}
+	if bytes.Contains(res.Body.Bytes(), []byte("./flink")) || bytes.Contains(res.Body.Bytes(), []byte("curl -L -o flink.tar.gz")) {
+		t.Fatalf("llms.txt should not encourage per-deployment CLI downloads:\n%s", res.Body.String())
 	}
 
 	res = rawRequest(t, a, http.MethodGet, "/", nil, "")
@@ -656,6 +660,9 @@ func TestDashboardServesEmbeddedFrontendBuild(t *testing.T) {
 	}
 	if b, err := os.ReadFile(filepath.Join(pluginDir, "plugins/flink/mcp.config.json")); err != nil || !bytes.Contains(b, []byte("Authorization")) {
 		t.Fatalf("codex plugin installer did not write MCP config: %v %s", err, b)
+	}
+	if b, err := os.ReadFile(filepath.Join(pluginDir, "plugins/flink/skills/flink/SKILL.md")); err != nil || !bytes.Contains(b, []byte("do not download CLI archives into per-site or per-deployment directories")) {
+		t.Fatalf("codex plugin installer did not write reusable CLI guidance: %v %s", err, b)
 	}
 	missingPassword := exec.Command("sh")
 	missingPassword.Env = []string{"CODEX_HOME=" + t.TempDir(), "FLINK_TENANT=demo"}
@@ -741,9 +748,9 @@ func TestLLMSTXTFallsBackToPathHostingWithoutBaseHost(t *testing.T) {
 		"Flink is a simple application server built for agents",
 		"This Flink server does not have domain-based hosting configured",
 		"https://flink.internal/t/<tenant>/s/<site>/",
-		"./flink init todo ./my-site --site my-site",
-		"./flink publish ./dist --site my-site",
-		"./flink auth my-site none",
+		"flink init todo ./my-site --site my-site",
+		"flink publish ./dist --site my-site",
+		"flink auth my-site none",
 	} {
 		if !bytes.Contains(res.Body.Bytes(), []byte(want)) {
 			t.Fatalf("fallback llms.txt missing %q:\n%s", want, res.Body.String())

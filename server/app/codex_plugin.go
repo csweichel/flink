@@ -64,6 +64,7 @@ Use this skill when the user asks to publish, inspect, update, configure, or rol
 ## Rules
 
 - Use the configured Flink MCP server for site operations.
+- If you need a CLI fallback, use an existing flink on PATH or install it once into \$HOME/.local/bin/flink; do not download CLI archives into per-site or per-deployment directories.
 - Never put tenant passwords, Basic Auth headers, API keys, or other secrets into hosted browser files.
 - Keep sites owner-only unless the user explicitly asks to share them.
 - Use flink_publish_site for new publishes, then verify the returned URL.

@@ -26,17 +26,22 @@ Inputs you need:
 - site name: a lowercase slug such as my-site
 - files to publish: usually ./dist for a built app, or ./index.html for a single-file prototype
 
-If a `flink` CLI is already available, use it. Otherwise download the Flink CLI from GitHub Releases. Do not ask the user to clone the repository or build the CLI from source.
+If a `flink` CLI is already available on PATH, use it. Otherwise install the Flink CLI once into a stable user bin directory and reuse that same executable for every site and deployment. Do not download or unpack the CLI inside per-site or per-deployment directories. Do not ask the user to clone the repository or build the CLI from source.
 
 - Linux amd64: {{.CLIBase}}flink_linux_amd64.tar.gz
 - Linux arm64: {{.CLIBase}}flink_linux_arm64.tar.gz
 - macOS amd64: {{.CLIBase}}flink_darwin_amd64.tar.gz
 - macOS arm64: {{.CLIBase}}flink_darwin_arm64.tar.gz
 
-Install and configure the CLI:
+Install once and configure the CLI:
 
-curl -L -o flink.tar.gz {{.CLIBase}}flink_linux_amd64.tar.gz
-tar -xzf flink.tar.gz
+if ! command -v flink >/dev/null 2>&1; then
+  mkdir -p "$HOME/.local/bin" "$HOME/.cache/flink"
+  curl -L -o "$HOME/.cache/flink/flink_linux_amd64.tar.gz" {{.CLIBase}}flink_linux_amd64.tar.gz
+  tar -xzf "$HOME/.cache/flink/flink_linux_amd64.tar.gz" -C "$HOME/.local/bin" flink
+  chmod +x "$HOME/.local/bin/flink"
+  export PATH="$HOME/.local/bin:$PATH"
+fi
 
 export FLINK_SERVER={{.Server}}
 export FLINK_TENANT=<tenant>
@@ -82,21 +87,21 @@ Deployment flow:
 
 Inspect an existing site:
 
-./flink inspect my-site
-./flink api files list my-site
-./flink api files read my-site index.html
+flink inspect my-site
+flink api files list my-site
+flink api files read my-site index.html
 
 Use a Flink template early when starting from scratch. Templates create a usable static prototype with the browser SDK already wired in, which is faster and safer than beginning from an empty file:
 
-./flink init todo ./my-site --site my-site
+flink init todo ./my-site --site my-site
 
 Publish a built app or static directory:
 
-./flink publish ./dist --site my-site
+flink publish ./dist --site my-site
 
 Publish a single-page HTML prototype:
 
-./flink publish ./index.html --site my-site
+flink publish ./index.html --site my-site
 
 After publishing, open or fetch the printed site URL and check that the page loads.
 
@@ -106,15 +111,15 @@ New sites use this server's default site auth mode. Keep `owner` access unless t
 
 To make a site visible without signing in, run:
 
-./flink auth my-site none
+flink auth my-site none
 
 To require any approved tenant login, run:
 
-./flink auth my-site tenants
+flink auth my-site tenants
 
 To restrict to specific tenants, run:
 
-./flink auth my-site tenants <tenant>...
+flink auth my-site tenants <tenant>...
 
 Access policy effects:
 
@@ -155,22 +160,22 @@ Minimal hosted-site example:
   });
 </script>
 
-Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend. Keep the first deployed version usable, then iterate by running `./flink publish` again for the same site.
+Use Flink storage, uploads, realtime rooms, and AI from browser code instead of creating a custom backend. Keep the first deployed version usable, then iterate by running `flink publish` again for the same site.
 
 ## CLI and HTTP site APIs for agents
 
 Agents can use the same site APIs from the CLI without opening a browser. These commands use HTTP Basic Auth with `FLINK_TENANT` and `FLINK_PASSWORD`. Use `--json` when scripting or when you need machine-readable output.
 
-./flink api data set my-site note '{"text":"saved"}'
-./flink api data get my-site note
-./flink api data all my-site
-./flink api files list my-site
-./flink api files read my-site index.html
-./flink api files write my-site index.html ./index.html
-./flink api uploads upload my-site ./image.png
-./flink api uploads list my-site
-./flink api uploads fetch my-site /uploads/<tenant>/<site>/image.png
-./flink api ai my-site "Give me a prototype idea"
+flink api data set my-site note '{"text":"saved"}'
+flink api data get my-site note
+flink api data all my-site
+flink api files list my-site
+flink api files read my-site index.html
+flink api files write my-site index.html ./index.html
+flink api uploads upload my-site ./image.png
+flink api uploads list my-site
+flink api uploads fetch my-site /uploads/<tenant>/<site>/image.png
+flink api ai my-site "Give me a prototype idea"
 
 The raw owner API uses the same tenant credentials with HTTP Basic Auth:
 
@@ -183,10 +188,10 @@ Browser-equivalent public API routes are also available under `/api/public/t/{te
 
 Owner-only sites can enable an agent message widget. This mode is only available while the site's access policy is `owner`.
 
-./flink agent enable my-site
-./flink agent status my-site
-./flink agent listen my-site
-./flink agent respond my-site "I updated the page and restarted the listener."
+flink agent enable my-site
+flink agent status my-site
+flink agent listen my-site
+flink agent respond my-site "I updated the page and restarted the listener."
 
 When `flink agent listen my-site` receives a message, it prints the user's message, instructions to respond with `flink agent respond`, and instructions to update the site with `flink publish`. Messages are stored until a listener receives and acknowledges them, so users can send a message even when no agent is currently listening. If the user includes a screenshot, the CLI writes it to `/tmp/flink-agent-screenshots`. The widget is collapsible, shows whether an agent listener is connected, can attach a browser-captured screenshot with user permission, and shows agent responses.
 
